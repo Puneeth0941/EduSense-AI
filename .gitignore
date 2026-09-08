@@ -36,3 +36,11 @@ pnpm-debug.log*
 .idea/
 .DS_Store
 *.swp
+
+# Face AI model cache & temp images
+*.onnx
+*.pkl
+temp_faces/
+face_samples/
+.insightface/
+

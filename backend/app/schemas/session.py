@@ -22,6 +22,8 @@ class ClassSessionResponseSchema(BaseModel):
     actual_end_time: Optional[datetime] = None
     livekit_room_name: Optional[str] = None
     created_at: datetime
+    classroom_title: Optional[str] = None
+    course_code: Optional[str] = None
 
     class Config:
         from_attributes = True

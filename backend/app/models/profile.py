@@ -35,6 +35,9 @@ class StudentProfile(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="student_profile")
+    face_embedding: Mapped[Optional["FaceEmbedding"]] = relationship(
+        "FaceEmbedding", uselist=False, backref="student", cascade="all, delete-orphan"
+    )
 
 
 class TeacherProfile(Base):

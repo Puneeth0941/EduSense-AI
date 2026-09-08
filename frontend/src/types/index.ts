@@ -55,6 +55,8 @@ export interface ClassSession {
   actual_end_time?: string;
   livekit_room_name?: string;
   created_at: string;
+  classroom_title?: string;
+  course_code?: string;
 }
 
 export interface JoinSessionResponse {
@@ -73,3 +75,103 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
 }
+
+export interface FaceCaptureResponse {
+  passed: boolean;
+  num_faces: number;
+  message: string;
+  embedding?: number[] | null;
+  quality_details?: {
+    face_width?: number;
+    face_height?: number;
+    blur_score?: number;
+    brightness?: number;
+  } | null;
+}
+
+export interface EnrollmentCompleteResponse {
+  success: boolean;
+  message: string;
+  enrolled_at?: string;
+  consistency_score?: number;
+}
+
+export interface EnrollmentStatusResponse {
+  is_enrolled: boolean;
+  enrolled_at?: string | null;
+  student_id: string;
+  student_name: string;
+  student_id_number: string;
+  embedding_dim: number;
+}
+
+export interface FaceVerificationResponse {
+  verified: boolean;
+  identity?: string | null;
+  similarity: number;
+  message: string;
+  quality_details?: {
+    face_width?: number;
+    face_height?: number;
+    blur_score?: number;
+    brightness?: number;
+  } | null;
+}
+
+export interface AttendanceVerificationResponse {
+  verified: boolean;
+  reason: string;
+  attendance_status: 'PRESENT' | 'LATE' | 'UNVERIFIED' | 'ABSENT';
+  message: string;
+  samples_confirmed: number;
+  samples_required: number;
+  first_verified_at?: string | null;
+  last_verified_at?: string | null;
+}
+
+export interface AttendanceRecordResponse {
+  id: string;
+  session_id: string;
+  student_id: string;
+  student_name: string;
+  student_id_number: string;
+  status: 'PRESENT' | 'LATE' | 'UNVERIFIED' | 'ABSENT';
+  marked_at: string;
+  first_verified_at?: string | null;
+  last_verified_at?: string | null;
+  verification_count: number;
+  presence_duration_seconds: number;
+  is_manually_corrected: boolean;
+  corrected_by_name?: string | null;
+  correction_reason?: string | null;
+}
+
+export interface SessionAttendanceSummaryResponse {
+  session_id: string;
+  session_title: string;
+  classroom_title: string;
+  total_students: number;
+  present_count: number;
+  late_count: number;
+  unverified_count: number;
+  absent_count: number;
+  records: AttendanceRecordResponse[];
+}
+
+export interface StudentAttendanceSummaryResponse {
+  total_sessions: number;
+  present_count: number;
+  late_count: number;
+  unverified_count: number;
+  absent_count: number;
+  attendance_percentage: number;
+}
+
+export interface TeacherAttendanceSummaryResponse {
+  total_classrooms: number;
+  total_sessions_conducted: number;
+  overall_attendance_rate: number;
+}
+
+
+

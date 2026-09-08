@@ -15,8 +15,10 @@ import {
   type TrackReference,
 } from '@livekit/components-react';
 import { Track, ConnectionState, Participant, RoomEvent } from 'livekit-client';
-import { sessionApi, classroomApi } from '../services/api';
-import type { JoinSessionResponse, ChatMessage, Classroom, ClassSession } from '../types';
+import { sessionApi, classroomApi, attendanceApi } from '../services/api';
+import type { JoinSessionResponse, ChatMessage, Classroom, ClassSession, AttendanceVerificationResponse } from '../types';
+import { StudentAttendanceStatusBadge } from '../components/StudentAttendanceStatusBadge';
+import { TeacherAttendanceModal } from '../components/TeacherAttendanceModal';
 import {
   GraduationCap,
   Mic,
@@ -192,11 +194,80 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
   // UI Drawer states
   const [showParticipants, setShowParticipants] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showTeacherAttendanceModal, setShowTeacherAttendanceModal] = useState(false);
 
   // Local media states
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+
+  // Attendance state for student
+  const [attendanceData, setAttendanceData] = useState<AttendanceVerificationResponse | null>(null);
+  const [isVerifyingAttendance, setIsVerifyingAttendance] = useState(false);
+  const isVerifyingRef = useRef(false);
+
+  // Periodic Face Attendance Sampling Effect (Student camera ON)
+  useEffect(() => {
+    if (isTeacher || !isCamOn || !sessionId) return;
+
+    const captureAndVerifyFrame = async () => {
+      if (isVerifyingRef.current) return; // Debounce / Throttling
+
+      // Sample base64 image from local student video DOM element
+      const allVideos = Array.from(document.querySelectorAll('video'));
+      // Prefer local participant video element to avoid sampling remote teacher/student video
+      const targetVideo = allVideos.find(v =>
+        v.closest('[data-lk-local-participant="true"]') !== null ||
+        v.getAttribute('data-lk-local-participant') === 'true' ||
+        v.classList.contains('lk-local-participant')
+      ) || allVideos.find(v => v.videoWidth > 0 && v.videoHeight > 0);
+
+      let sampleB64: string | null = null;
+
+      if (targetVideo && targetVideo.videoWidth > 0 && targetVideo.videoHeight > 0) {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = targetVideo.videoWidth;
+          canvas.height = targetVideo.videoHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(targetVideo, 0, 0, canvas.width, canvas.height);
+            sampleB64 = canvas.toDataURL('image/jpeg', 0.80);
+          }
+        } catch {
+          // Ignore canvas error
+        }
+      }
+
+      if (!sampleB64) return;
+
+      try {
+        isVerifyingRef.current = true;
+        setIsVerifyingAttendance(true);
+
+        const res = await attendanceApi.verifyAttendance(sessionId, sampleB64);
+        console.log('[ATTENDANCE DEBUG] response:', res);
+        console.log('[ATTENDANCE DEBUG] frontend sample count:', res?.samples_confirmed);
+        setAttendanceData(res);
+      } catch (err) {
+        // Non-blocking failure isolation: Log silently, never break LiveKit stream
+        console.warn('[ATTENDANCE SAMPLER] Periodic verification check non-fatal warning:', err);
+      } finally {
+        isVerifyingRef.current = false;
+        setIsVerifyingAttendance(false);
+      }
+    };
+
+    // Initial check after 2s
+    const timeout = setTimeout(captureAndVerifyFrame, 2000);
+    // Periodic interval every 10s
+    const interval = setInterval(captureAndVerifyFrame, 10000);
+
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
+  }, [isTeacher, isCamOn, sessionId]);
 
   // Sync initial media states with localParticipant & ensure microphone is active
   useEffect(() => {
@@ -538,6 +609,23 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Attendance Status Badge / Roster Button */}
+          {!isTeacher ? (
+            <StudentAttendanceStatusBadge
+              isCamOn={isCamOn}
+              isVerifying={isVerifyingAttendance}
+              attendanceData={attendanceData}
+            />
+          ) : (
+            <button
+              onClick={() => setShowTeacherAttendanceModal(true)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-800/60 rounded-xl text-xs font-semibold text-indigo-300 transition-all shadow"
+            >
+              <Users className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Attendance Roster</span>
+            </button>
+          )}
+
           {/* Audio Speaker Test & Unmute Button */}
           <button
             onClick={handleTestAudioSound}
@@ -837,6 +925,13 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
           )}
         </div>
       </footer>
+
+      {/* TEACHER ATTENDANCE ROSTER MODAL */}
+      <TeacherAttendanceModal
+        isOpen={showTeacherAttendanceModal}
+        onClose={() => setShowTeacherAttendanceModal(false)}
+        sessionId={sessionId}
+      />
     </div>
   );
 };

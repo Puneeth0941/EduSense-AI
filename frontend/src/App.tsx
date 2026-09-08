@@ -5,6 +5,7 @@ import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ClassroomPage } from './pages/ClassroomPage';
+import { FaceEnrollmentPage } from './pages/FaceEnrollmentPage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -36,6 +37,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/face-enrollment"
+            element={
+              <ProtectedRoute>
+                <FaceEnrollmentPage />
               </ProtectedRoute>
             }
           />

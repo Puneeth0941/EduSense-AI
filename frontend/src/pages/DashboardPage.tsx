@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { classroomApi, sessionApi } from '../services/api';
-import type { Classroom, ClassSession } from '../types';
+import { classroomApi, sessionApi, faceApi, attendanceApi } from '../services/api';
+import type { Classroom, ClassSession, EnrollmentStatusResponse, StudentAttendanceSummaryResponse, TeacherAttendanceSummaryResponse } from '../types';
 import { Sidebar } from '../components/Sidebar';
 import { TopHeader } from '../components/TopHeader';
 import { QuickStats } from '../components/QuickStats';
 import { JoinClassModal } from '../components/JoinClassModal';
+import { FaceVerificationModal } from '../components/FaceVerificationModal';
 import {
   Plus,
   Video,
@@ -18,6 +19,10 @@ import {
   Clock,
   Sparkles,
   FileText,
+  ScanFace,
+  ShieldCheck,
+  ChevronRight,
+  Users,
 } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
@@ -27,12 +32,18 @@ export const DashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [activeSessions, setActiveSessions] = useState<ClassSession[]>([]);
+  const [recentSessions, setRecentSessions] = useState<ClassSession[]>([]);
+  const [selectedAttendanceSessionId, setSelectedAttendanceSessionId] = useState<string | null>(null);
+  const [faceStatus, setFaceStatus] = useState<EnrollmentStatusResponse | null>(null);
+  const [studentAttendance, setStudentAttendance] = useState<StudentAttendanceSummaryResponse | null>(null);
+  const [teacherAttendance, setTeacherAttendance] = useState<TeacherAttendanceSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
 
   // Create Classroom Form
   const [newTitle, setNewTitle] = useState('');
@@ -61,6 +72,33 @@ export const DashboardPage: React.FC = () => {
         }
       }
       setActiveSessions(activeList);
+
+      // Fetch recent completed sessions
+      try {
+        const recentList = await sessionApi.getRecentSessions();
+        setRecentSessions(recentList);
+      } catch {
+        setRecentSessions([]);
+      }
+
+      // Fetch Face Enrollment & Attendance Summaries
+      if (user?.role === 'STUDENT') {
+        try {
+          const statusRes = await faceApi.getEnrollmentStatus();
+          setFaceStatus(statusRes);
+          const attRes = await attendanceApi.getStudentSummary();
+          setStudentAttendance(attRes);
+        } catch {
+          // Non-blocking
+        }
+      } else if (user?.role === 'TEACHER') {
+        try {
+          const tAttRes = await attendanceApi.getTeacherSummary();
+          setTeacherAttendance(tAttRes);
+        } catch {
+          // Non-blocking
+        }
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load dashboard data');
     } finally {
@@ -160,6 +198,15 @@ export const DashboardPage: React.FC = () => {
                   ? 'Manage your classrooms, schedule sessions, and conduct interactive real-time classes with LiveKit Cloud transport.'
                   : 'Access your subjects, join ongoing live class sessions, and manage your learning schedule.'}
               </p>
+              {isTeacher && teacherAttendance && (
+                <div className="flex items-center gap-3 pt-1 text-xs text-indigo-300 font-semibold">
+                  <span>Classrooms: {teacherAttendance.total_classrooms}</span>
+                  <span>•</span>
+                  <span>Sessions: {teacherAttendance.total_sessions_conducted}</span>
+                  <span>•</span>
+                  <span>Overall Attendance Rate: <strong className="text-emerald-400">{teacherAttendance.overall_attendance_rate}%</strong></span>
+                </div>
+              )}
             </div>
 
             {/* 4. PRIMARY ACTIONS BAR */}
@@ -219,6 +266,75 @@ export const DashboardPage: React.FC = () => {
             </div>
           </div>
 
+          {/* STUDENT FACE ENROLLMENT CARD */}
+          {!isTeacher && (
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border shrink-0 ${
+                  faceStatus?.is_enrolled
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-400 border-amber-500/30 animate-pulse'
+                }`}>
+                  {faceStatus?.is_enrolled ? <ShieldCheck className="w-6 h-6" /> : <ScanFace className="w-6 h-6" />}
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
+                      faceStatus?.is_enrolled
+                        ? 'bg-emerald-950 text-emerald-300 border-emerald-800/50'
+                        : 'bg-amber-950 text-amber-300 border-amber-800/50'
+                    }`}>
+                      {faceStatus?.is_enrolled ? 'ENROLLED' : 'NOT ENROLLED'}
+                    </span>
+                    {faceStatus?.enrolled_at && (
+                      <span className="text-[11px] text-slate-400">
+                        Active since: {new Date(faceStatus.enrolled_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="text-base font-bold text-white">Biometric Face Recognition</h3>
+                  <p className="text-xs text-slate-400">
+                    {faceStatus?.is_enrolled
+                      ? 'Your ArcFace 512D facial profile is active for automatic classroom attendance.'
+                      : 'Enroll 5 quality facial samples for automatic attendance in live class sessions.'}
+                  </p>
+                  {studentAttendance && studentAttendance.total_sessions > 0 && (
+                    <div className="pt-2 flex items-center gap-4 text-xs font-medium text-slate-300">
+                      <span>Attendance Rate: <strong className="text-emerald-400">{studentAttendance.attendance_percentage}%</strong></span>
+                      <span>Present: <strong className="text-emerald-400">{studentAttendance.present_count}</strong></span>
+                      <span>Late: <strong className="text-amber-400">{studentAttendance.late_count}</strong></span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 shrink-0">
+                {faceStatus?.is_enrolled && (
+                  <button
+                    onClick={() => setShowVerificationModal(true)}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-emerald-600/20"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Verify My Face</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => navigate('/face-enrollment')}
+                  className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow ${
+                    faceStatus?.is_enrolled
+                      ? 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-700'
+                      : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20'
+                  }`}
+                >
+                  <span>{faceStatus?.is_enrolled ? 'Update Enrollment' : 'Enroll Your Face'}</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 8. QUICK STATS SECTION */}
           <section className="space-y-4">
             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
@@ -236,7 +352,7 @@ export const DashboardPage: React.FC = () => {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Live Now</span>
+                <span>Live Now ({activeSessions.length})</span>
               </h3>
             </div>
 
@@ -258,16 +374,24 @@ export const DashboardPage: React.FC = () => {
                     className="p-5 bg-slate-900 border border-emerald-500/30 rounded-2xl flex items-center justify-between shadow-lg"
                   >
                     <div className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50">
-                        LIVE NOW
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                          <span>LIVE NOW</span>
+                        </span>
+                        {sess.course_code && (
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                            {sess.course_code}
+                          </span>
+                        )}
+                      </div>
                       <h4 className="text-base font-bold text-white leading-snug">{sess.title}</h4>
                       <p className="text-xs text-slate-400">Classroom ID: {sess.classroom_id}</p>
                     </div>
 
                     <button
                       onClick={() => navigate(`/classroom/${sess.id}?classId=${sess.classroom_id}`)}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-xl flex items-center gap-1.5 shadow"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-xl flex items-center gap-1.5 shadow transition-all"
                     >
                       <Play className="w-3.5 h-3.5" />
                       <span>Join Classroom</span>
@@ -336,14 +460,17 @@ export const DashboardPage: React.FC = () => {
                           className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl text-xs transition-all shadow"
                         >
                           <Video className="w-4 h-4" />
-                          <span>Start Class Session</span>
+                          <span>Launch New Session</span>
                         </button>
                       ) : (
                         <button
                           onClick={() => {
                             const activeSess = activeSessions.find((s) => s.classroom_id === c.id);
-                            const targetSessId = activeSess ? activeSess.id : c.id;
-                            navigate(`/classroom/${targetSessId}?classId=${c.id}`);
+                            if (activeSess) {
+                              navigate(`/classroom/${activeSess.id}?classId=${c.id}`);
+                            } else {
+                              alert('No active live session is currently running for this classroom.');
+                            }
                           }}
                           className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-xl text-xs transition-all shadow"
                         >
@@ -358,7 +485,7 @@ export const DashboardPage: React.FC = () => {
             )}
           </section>
 
-          {/* 6 & 9. UPCOMING CLASSES & RECENT ACTIVITY EMPTY STATES */}
+          {/* 6 & 9. UPCOMING SCHEDULE & COMPLETED SESSIONS */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Upcoming Schedule */}
             <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
@@ -374,18 +501,67 @@ export const DashboardPage: React.FC = () => {
               </div>
             </section>
 
-            {/* Recent Activity */}
+            {/* Completed Class Sessions */}
             <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                 <FileText className="w-4 h-4 text-indigo-400" />
-                <span>Recent Activity</span>
+                <span>Completed Class Sessions ({recentSessions.length})</span>
               </h3>
-              <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl space-y-1">
-                <p className="text-xs text-slate-400 font-medium">No recent activity recorded</p>
-                <p className="text-[11px] text-slate-500">
-                  Classroom logs and session history will populate here.
-                </p>
-              </div>
+
+              {recentSessions.length === 0 ? (
+                <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl space-y-1">
+                  <p className="text-xs text-slate-400 font-medium">No completed class sessions recorded</p>
+                  <p className="text-[11px] text-slate-500">
+                    Ended class sessions will populate here with session attendance logs.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+                  {recentSessions.map((sess) => (
+                    <div
+                      key={sess.id}
+                      className="p-4 bg-slate-950 border border-slate-800/80 rounded-xl flex items-center justify-between shadow-sm hover:border-slate-700 transition-all"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                            ✓ COMPLETED
+                          </span>
+                          {sess.course_code && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                              {sess.course_code}
+                            </span>
+                          )}
+                        </div>
+                        <h4 className="text-sm font-bold text-white leading-tight">{sess.title}</h4>
+                        <p className="text-[11px] text-slate-500">
+                          {sess.actual_end_time
+                            ? new Date(sess.actual_end_time).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
+                            : new Date(sess.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isTeacher && (
+                          <button
+                            onClick={() => setSelectedAttendanceSessionId(sess.id)}
+                            className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            <span>View Attendance</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => alert(`Session Details:\nTitle: ${sess.title}\nCourse: ${sess.course_code || 'N/A'}\nStatus: ${sess.status}\nEnded At: ${sess.actual_end_time || sess.created_at}`)}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition-all"
+                        >
+                          View Details
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           </div>
         </main>
@@ -536,6 +712,21 @@ export const DashboardPage: React.FC = () => {
         <JoinClassModal
           classrooms={classrooms}
           onClose={() => setShowJoinModal(false)}
+        />
+      )}
+
+      {/* MODAL: FACE VERIFICATION */}
+      <FaceVerificationModal
+        isOpen={showVerificationModal}
+        onClose={() => setShowVerificationModal(false)}
+      />
+
+      {/* MODAL: TEACHER ATTENDANCE ROSTER */}
+      {selectedAttendanceSessionId && (
+        <TeacherAttendanceModal
+          isOpen={!!selectedAttendanceSessionId}
+          onClose={() => setSelectedAttendanceSessionId(null)}
+          sessionId={selectedAttendanceSessionId}
         />
       )}
     </div>

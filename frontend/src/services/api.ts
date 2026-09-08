@@ -4,6 +4,15 @@ import type {
   Classroom,
   ClassSession,
   JoinSessionResponse,
+  FaceCaptureResponse,
+  EnrollmentCompleteResponse,
+  EnrollmentStatusResponse,
+  FaceVerificationResponse,
+  AttendanceVerificationResponse,
+  SessionAttendanceSummaryResponse,
+  AttendanceRecordResponse,
+  StudentAttendanceSummaryResponse,
+  TeacherAttendanceSummaryResponse,
 } from '../types';
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -147,6 +156,13 @@ export const sessionApi = {
     }
   },
 
+  getRecentSessions: async (): Promise<ClassSession[]> => {
+    const res = await fetch(`${API_BASE_URL}/sessions/recent`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<ClassSession[]>(res);
+  },
+
   joinSession: async (classId: string, sessionId: string): Promise<JoinSessionResponse> => {
     const res = await fetch(`${API_BASE_URL}/classrooms/${classId}/sessions/${sessionId}/join`, {
       method: 'POST',
@@ -163,3 +179,91 @@ export const sessionApi = {
     return handleResponse<{ message: string }>(res);
   },
 };
+
+export const faceApi = {
+  captureSample: async (image_base64: string, pose_label?: string): Promise<FaceCaptureResponse> => {
+    const res = await fetch(`${API_BASE_URL}/face/enrollment/capture`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ image_base64, pose_label }),
+    });
+    return handleResponse<FaceCaptureResponse>(res);
+  },
+
+  completeEnrollment: async (sample_embeddings: number[][], poses?: string[]): Promise<EnrollmentCompleteResponse> => {
+    const res = await fetch(`${API_BASE_URL}/face/enrollment/complete`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ sample_embeddings, poses }),
+    });
+    return handleResponse<EnrollmentCompleteResponse>(res);
+  },
+
+  getEnrollmentStatus: async (): Promise<EnrollmentStatusResponse> => {
+    const res = await fetch(`${API_BASE_URL}/face/enrollment/status`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<EnrollmentStatusResponse>(res);
+  },
+
+  deleteEnrollment: async (): Promise<{ message: string }> => {
+    const res = await fetch(`${API_BASE_URL}/face/enrollment`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<{ message: string }>(res);
+  },
+
+  verifyFace: async (image_base64: string): Promise<FaceVerificationResponse> => {
+    const res = await fetch(`${API_BASE_URL}/face/verification`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ image_base64 }),
+    });
+    return handleResponse<FaceVerificationResponse>(res);
+  },
+};
+
+export const attendanceApi = {
+  verifyAttendance: async (session_id: string, image_base64: string): Promise<AttendanceVerificationResponse> => {
+    const res = await fetch(`${API_BASE_URL}/attendance/verify`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ session_id, image_base64 }),
+    });
+    return handleResponse<AttendanceVerificationResponse>(res);
+  },
+
+  getSessionAttendance: async (session_id: string): Promise<SessionAttendanceSummaryResponse> => {
+    const res = await fetch(`${API_BASE_URL}/attendance/session/${session_id}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<SessionAttendanceSummaryResponse>(res);
+  },
+
+  updateAttendanceRecord: async (record_id: string, status: string, reason?: string): Promise<AttendanceRecordResponse> => {
+    const res = await fetch(`${API_BASE_URL}/attendance/${record_id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ status, reason }),
+    });
+    return handleResponse<AttendanceRecordResponse>(res);
+  },
+
+  getStudentSummary: async (): Promise<StudentAttendanceSummaryResponse> => {
+    const res = await fetch(`${API_BASE_URL}/attendance/my-summary`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<StudentAttendanceSummaryResponse>(res);
+  },
+
+  getTeacherSummary: async (): Promise<TeacherAttendanceSummaryResponse> => {
+    const res = await fetch(`${API_BASE_URL}/attendance/teacher-summary`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<TeacherAttendanceSummaryResponse>(res);
+  },
+};
+
+
+

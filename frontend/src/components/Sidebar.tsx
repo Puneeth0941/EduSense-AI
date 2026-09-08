@@ -13,6 +13,7 @@ import {
   LogOut,
   Menu,
   X,
+  ScanFace,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -21,12 +22,15 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const isStudent = user?.role === 'STUDENT';
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    ...(isStudent ? [{ id: 'face-enrollment', label: 'Face Enrollment', icon: ScanFace, route: '/face-enrollment' }] : []),
     { id: 'classes', label: 'My Classes', icon: BookOpen },
     { id: 'schedule', label: 'Schedule', icon: Calendar },
     { id: 'attendance', label: 'Attendance', icon: UserCheck },
@@ -35,8 +39,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  const handleNavClick = (id: string) => {
-    setActiveTab(id);
+  const handleNavClick = (item: any) => {
+    if (item.route) {
+      navigate(item.route);
+    } else {
+      setActiveTab(item.id);
+    }
     setMobileOpen(false);
   };
 
@@ -74,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
           return (
             <button
               key={item.id}
-              onClick={() => handleNavClick(item.id)}
+              onClick={() => handleNavClick(item)}
               className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                 isActive
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'

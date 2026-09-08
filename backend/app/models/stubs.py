@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Float, Integer, Text, DateTime, Enum, ForeignKey, func
+from sqlalchemy import String, Float, Integer, Text, DateTime, Enum, ForeignKey, JSON, Boolean, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base_class import Base
 from app.models.enums import AttendanceStatus
@@ -22,8 +22,12 @@ class FaceEmbedding(Base):
         nullable=False,
     )
     embedding_dim: Mapped[int] = mapped_column(Integer, default=512, nullable=False)
+    embedding_data: Mapped[dict] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 
@@ -51,6 +55,27 @@ class AttendanceRecord(Base):
     marked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    first_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    verification_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    presence_duration_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_manually_corrected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    corrected_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    correction_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    session: Mapped["ClassSession"] = relationship("ClassSession")
+    student: Mapped["StudentProfile"] = relationship("StudentProfile")
+    corrected_by: Mapped[Optional["User"]] = relationship("User")
+
 
 
 class FacialAnalysis(Base):

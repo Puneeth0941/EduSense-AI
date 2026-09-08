@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     LIVEKIT_API_KEY: str = "devkey"
     LIVEKIT_API_SECRET: str = "secret"
 
+    # Face AI Configuration & Quality Thresholds
+    FACE_MODEL_PACK: str = "buffalo_sc"
+    FACE_MIN_SIZE: int = 100
+    FACE_BLUR_THRESHOLD: float = 30.0
+    FACE_CONSISTENCY_THRESHOLD: float = 0.40
+    FACE_RECOGNITION_SIMILARITY_THRESHOLD: float = 0.50
+
     model_config = SettingsConfigDict(
         env_file=[str(BACKEND_DIR / ".env"), str(ROOT_DIR / ".env"), ".env"],
         env_file_encoding="utf-8",

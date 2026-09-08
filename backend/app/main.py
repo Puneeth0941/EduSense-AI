@@ -6,6 +6,8 @@ from app.api.health import router as health_router
 from app.api.auth import router as auth_router
 from app.api.classrooms import router as classrooms_router
 from app.api.sessions import router as sessions_router
+from app.api.face import router as face_router
+from app.api.attendance import router as attendance_router
 
 app = FastAPI(
     title="EduSense AI API",
@@ -29,6 +31,9 @@ app.include_router(health_router, prefix=settings.API_V1_PREFIX, tags=["Health"]
 app.include_router(auth_router, prefix=f"{settings.API_V1_PREFIX}/auth", tags=["Auth"])
 app.include_router(classrooms_router, prefix=f"{settings.API_V1_PREFIX}/classrooms", tags=["Classrooms"])
 app.include_router(sessions_router, prefix=settings.API_V1_PREFIX, tags=["Sessions"])
+app.include_router(face_router, prefix=f"{settings.API_V1_PREFIX}/face", tags=["Face Recognition"])
+app.include_router(attendance_router, prefix=f"{settings.API_V1_PREFIX}/attendance", tags=["Attendance"])
+
 
 
 @app.get("/")
