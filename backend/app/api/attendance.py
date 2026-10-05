@@ -317,6 +317,10 @@ def get_session_attendance(
     ).all()
 
     record_map = {r.student_id: r for r in existing_records}
+    participant_map = {p.user.student_profile.id: p for p in participants if p.user and p.user.student_profile}
+
+    # All unique student_profile IDs from either attendance records or session participants
+    all_student_ids = set(record_map.keys()).union(set(participant_map.keys()))
 
     responses: List[AttendanceRecordResponse] = []
     present_cnt = 0
@@ -324,12 +328,26 @@ def get_session_attendance(
     unverified_cnt = 0
     absent_cnt = 0
 
-    for p in participants:
-        if not p.user or not p.user.student_profile:
-            continue
+    for student_id in all_student_ids:
+        rec = record_map.get(student_id)
+        part = participant_map.get(student_id)
 
-        sp = p.user.student_profile
-        rec = record_map.get(sp.id)
+        if rec and rec.student and rec.student.user:
+            s_name = rec.student.user.full_name
+            s_id_num = rec.student.student_id_number
+        elif part and part.user and part.user.student_profile:
+            s_name = part.user.full_name
+            s_id_num = part.user.student_profile.student_id_number
+        else:
+            sp_fallback = db.scalar(
+                select(StudentProfile)
+                .options(joinedload(StudentProfile.user))
+                .where(StudentProfile.id == student_id)
+            )
+            if not sp_fallback or not sp_fallback.user:
+                continue
+            s_name = sp_fallback.user.full_name
+            s_id_num = sp_fallback.student_id_number
 
         if rec:
             st = get_status_str(rec.status)
@@ -337,7 +355,7 @@ def get_session_attendance(
             last_v = rec.last_verified_at.isoformat() if rec.last_verified_at else None
             dur = rec.presence_duration_seconds
             v_cnt = rec.verification_count
-            marked_at = rec.marked_at.isoformat() if rec.marked_at else p.joined_at.isoformat()
+            marked_at = rec.marked_at.isoformat() if rec.marked_at else (part.joined_at.isoformat() if part and part.joined_at else datetime.now(timezone.utc).isoformat())
             rec_id = str(rec.id)
             is_corr = rec.is_manually_corrected
             corr_by = rec.corrected_by.full_name if rec.corrected_by else None
@@ -349,8 +367,8 @@ def get_session_attendance(
             last_v = None
             dur = 0
             v_cnt = 0
-            marked_at = p.joined_at.isoformat()
-            rec_id = f"pending_{sp.id}"
+            marked_at = part.joined_at.isoformat() if part and part.joined_at else datetime.now(timezone.utc).isoformat()
+            rec_id = f"pending_{student_id}"
             is_corr = False
             corr_by = None
             corr_reason = None
@@ -368,9 +386,9 @@ def get_session_attendance(
             AttendanceRecordResponse(
                 id=rec_id,
                 session_id=str(session_id),
-                student_id=str(sp.id),
-                student_name=p.user.full_name,
-                student_id_number=sp.student_id_number,
+                student_id=str(student_id),
+                student_name=s_name,
+                student_id_number=s_id_num,
                 status=st,
                 marked_at=marked_at,
                 first_verified_at=first_v,

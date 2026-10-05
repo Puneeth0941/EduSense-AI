@@ -184,18 +184,45 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
 
         {/* ROSTER TABLE */}
         <div className="flex-1 overflow-y-auto p-6">
-          {error && (
-            <div className="p-4 bg-red-950/60 border border-red-800 text-red-300 text-xs rounded-xl mb-4 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-              <span>{error}</span>
+          {loading && !summary && (
+            <div className="flex flex-col items-center justify-center py-16 space-y-3">
+              <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin" />
+              <p className="text-xs text-slate-400 font-medium">Loading classroom attendance records...</p>
             </div>
           )}
 
-          {filteredRecords.length === 0 ? (
-            <div className="text-center py-12 text-slate-500 text-xs">
-              No student records match the search filter.
+          {error && (
+            <div className="p-4 bg-red-950/60 border border-red-800 text-red-300 text-xs rounded-xl mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{error}</span>
+              </div>
+              <button
+                onClick={fetchAttendance}
+                className="px-3 py-1 bg-red-900/60 hover:bg-red-800 text-white rounded-lg font-bold text-xs"
+              >
+                Retry
+              </button>
             </div>
-          ) : (
+          )}
+
+          {!loading && summary && summary.records.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 space-y-2 text-center">
+              <Users className="w-10 h-10 text-slate-600 mb-1" />
+              <p className="text-sm font-bold text-slate-300">No Attendance Records Found</p>
+              <p className="text-xs text-slate-500 max-w-sm">
+                No students were verified during this class session. Attendance entries will populate here once verified by facial recognition or manual override.
+              </p>
+            </div>
+          )}
+
+          {!loading && summary && summary.records.length > 0 && filteredRecords.length === 0 && (
+            <div className="text-center py-12 text-slate-500 text-xs">
+              No student records match search filter "{searchTerm}".
+            </div>
+          )}
+
+          {!loading && filteredRecords.length > 0 && (
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400 uppercase font-bold text-[10px] tracking-wider">
@@ -203,6 +230,7 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
                   <th className="pb-3 px-2">Status</th>
                   <th className="pb-3 px-2">First Verified</th>
                   <th className="pb-3 px-2">Last Verified</th>
+                  <th className="pb-3 px-2">Verification Count</th>
                   <th className="pb-3 px-2">Duration</th>
                   <th className="pb-3 px-2 text-right">Actions</th>
                 </tr>
@@ -251,6 +279,10 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
 
                       <td className="py-3 px-2 text-slate-300 font-mono text-[11px]">
                         {r.last_verified_at ? new Date(r.last_verified_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                      </td>
+
+                      <td className="py-3 px-2 text-slate-300 font-mono text-[11px]">
+                        {r.verification_count > 0 ? `${r.verification_count} sample(s)` : '0 samples'}
                       </td>
 
                       <td className="py-3 px-2 text-slate-300 font-mono text-[11px]">

@@ -512,7 +512,27 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
       runPlaybackDiagnostics();
     };
 
+    const handleDeviceChange = async () => {
+      console.log('[LIVEKIT AUDIO] Device change detected (earbuds connected/disconnected).');
+      try {
+        if (room && !room.canPlaybackAudio) {
+          await room.startAudio();
+        }
+        document.querySelectorAll('audio').forEach((audio) => {
+          if (audio.srcObject && audio.paused) {
+            audio.play().catch((err: any) => console.log('[AUDIO DEVICECHANGE PLAY ERR]', err?.message));
+          }
+        });
+      } catch (err: any) {
+        console.log('[AUDIO DEVICECHANGE ERR]', err?.message);
+      }
+    };
+
     room.on(RoomEvent.AudioPlaybackStatusChanged, handleAudioPlaybackStatusChanged);
+
+    if (typeof window !== 'undefined' && navigator?.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+    }
 
     runPlaybackDiagnostics();
     const interval = setInterval(runPlaybackDiagnostics, 3000);
@@ -520,6 +540,9 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
     return () => {
       clearInterval(interval);
       room.off(RoomEvent.AudioPlaybackStatusChanged, handleAudioPlaybackStatusChanged);
+      if (typeof window !== 'undefined' && navigator?.mediaDevices?.removeEventListener) {
+        navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+      }
     };
   }, [room, localParticipant]);
 
