@@ -16,6 +16,7 @@ from app.schemas.session import (
     JoinSessionResponseSchema,
 )
 from app.services.livekit_service import livekit_service
+from app.services.classroom_service import get_authorized_classroom_ids
 
 router = APIRouter()
 
@@ -143,16 +144,7 @@ def get_recent_sessions(
     db: Session = Depends(get_db),
 ):
     """Get recent completed class sessions accessible to current user."""
-    if current_user.role == UserRole.TEACHER and current_user.teacher_profile:
-        classrooms = db.scalars(
-            select(Classroom).where(Classroom.teacher_id == current_user.teacher_profile.id)
-        ).all()
-        c_ids = [c.id for c in classrooms]
-    else:
-        classrooms = db.scalars(
-            select(Classroom).where(Classroom.is_active == True)
-        ).all()
-        c_ids = [c.id for c in classrooms]
+    c_ids = get_authorized_classroom_ids(db, current_user)
 
     if not c_ids:
         return []
@@ -165,6 +157,39 @@ def get_recent_sessions(
             ClassSession.status == SessionStatus.COMPLETED
         )
         .order_by(ClassSession.created_at.desc())
+        .limit(10)
+    ).all()
+
+    result = []
+    for s in sessions:
+        res = ClassSessionResponseSchema.model_validate(s)
+        res.livekit_room_name = f"edusense_{s.id}"
+        if s.classroom:
+            res.classroom_title = s.classroom.title
+            res.course_code = s.classroom.course_code
+        result.append(res)
+    return result
+
+
+@router.get("/sessions/upcoming", response_model=List[ClassSessionResponseSchema])
+def get_upcoming_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get upcoming scheduled class sessions accessible to current user."""
+    c_ids = get_authorized_classroom_ids(db, current_user)
+
+    if not c_ids:
+        return []
+
+    sessions = db.scalars(
+        select(ClassSession)
+        .options(joinedload(ClassSession.classroom))
+        .where(
+            ClassSession.classroom_id.in_(c_ids),
+            ClassSession.status == SessionStatus.SCHEDULED,
+        )
+        .order_by(ClassSession.scheduled_start_time.asc())
         .limit(10)
     ).all()
 
@@ -203,16 +228,16 @@ def get_session(
 
 
 @router.get("/classrooms/{classroom_id}/active-session", response_model=ClassSessionResponseSchema)
-def get_active_session_for_classroom(
+async def get_active_session_for_classroom(
     classroom_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get the currently ACTIVE class session for a classroom."""
-    classroom = db.scalar(select(Classroom).where(Classroom.id == classroom_id))
-    if not classroom:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Classroom not found.")
-    
+    """Get the currently ACTIVE class session for a classroom verified with participant presence."""
+    authorized_ids = get_authorized_classroom_ids(db, current_user)
+    if classroom_id not in authorized_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Classroom not found or access denied.")
+
     session = db.scalar(
         select(ClassSession)
         .options(joinedload(ClassSession.classroom))
@@ -224,13 +249,31 @@ def get_active_session_for_classroom(
     )
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active session found for this classroom.")
-    
+
+    # Verify participant presence via LiveKit
+    room_name = f"edusense_{session.id}"
+    is_live = await livekit_service.is_room_active(room_name)
+
+    # Grace window (120s) for newly initiated sessions before media connection completes
+    now = datetime.now(timezone.utc)
+    is_recently_started = (
+        session.actual_start_time is not None
+        and (now - session.actual_start_time).total_seconds() < 120
+    )
+
+    if not is_live and not is_recently_started:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session has no active participants and is not currently live."
+        )
+
     res = ClassSessionResponseSchema.model_validate(session)
-    res.livekit_room_name = f"edusense_{session.id}"
+    res.livekit_room_name = room_name
     if session.classroom:
         res.classroom_title = session.classroom.title
         res.course_code = session.classroom.course_code
     return res
+
 
 
 

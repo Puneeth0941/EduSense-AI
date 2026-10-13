@@ -8,6 +8,11 @@ import { TopHeader } from '../components/TopHeader';
 import { QuickStats } from '../components/QuickStats';
 import { JoinClassModal } from '../components/JoinClassModal';
 import { FaceVerificationModal } from '../components/FaceVerificationModal';
+import { TeacherAttendanceModal } from '../components/TeacherAttendanceModal';
+import { AnalyticsDashboard } from '../components/AnalyticsDashboard';
+import { StudentPersonalAnalytics } from '../components/StudentPersonalAnalytics';
+
+
 import {
   Plus,
   Video,
@@ -33,6 +38,7 @@ export const DashboardPage: React.FC = () => {
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [activeSessions, setActiveSessions] = useState<ClassSession[]>([]);
   const [recentSessions, setRecentSessions] = useState<ClassSession[]>([]);
+  const [upcomingSessions, setUpcomingSessions] = useState<ClassSession[]>([]);
   const [selectedAttendanceSessionId, setSelectedAttendanceSessionId] = useState<string | null>(null);
   const [faceStatus, setFaceStatus] = useState<EnrollmentStatusResponse | null>(null);
   const [studentAttendance, setStudentAttendance] = useState<StudentAttendanceSummaryResponse | null>(null);
@@ -61,13 +67,17 @@ export const DashboardPage: React.FC = () => {
       setLoading(true);
       setError(null);
       const classData = await classroomApi.listClassrooms();
-      setClassrooms(classData);
+      // Ensure unique classrooms
+      const uniqueClasses = Array.from(new Map(classData.map((c) => [c.id, c])).values());
+      setClassrooms(uniqueClasses);
 
-      // Check active sessions if any exist
+      // Check active sessions if any exist (deduplicated by session ID)
       const activeList: ClassSession[] = [];
-      for (const c of classData) {
+      const seenSessionIds = new Set<string>();
+      for (const c of uniqueClasses) {
         const sess = await sessionApi.getActiveSessionForClassroom(c.id);
-        if (sess && sess.status === 'ACTIVE') {
+        if (sess && sess.status === 'ACTIVE' && !seenSessionIds.has(sess.id)) {
+          seenSessionIds.add(sess.id);
           activeList.push(sess);
         }
       }
@@ -79,6 +89,14 @@ export const DashboardPage: React.FC = () => {
         setRecentSessions(recentList);
       } catch {
         setRecentSessions([]);
+      }
+
+      // Fetch upcoming scheduled sessions
+      try {
+        const upcomingList = await sessionApi.getUpcomingSessions();
+        setUpcomingSessions(upcomingList);
+      } catch {
+        setUpcomingSessions([]);
       }
 
       // Fetch Face Enrollment & Attendance Summaries
@@ -181,7 +199,21 @@ export const DashboardPage: React.FC = () => {
             </div>
           )}
 
-          {/* 3. WELCOME BANNER & PRIMARY ACTIONS */}
+          {activeTab === 'analytics' || activeTab === 'reports' ? (
+            isTeacher ? (
+              <AnalyticsDashboard
+                sessions={[...activeSessions, ...recentSessions]}
+                isTeacher={isTeacher}
+              />
+            ) : (
+              <StudentPersonalAnalytics
+                sessions={[...activeSessions, ...recentSessions]}
+                studentAttendance={studentAttendance}
+              />
+            )
+          ) : (
+            <>
+
           <div className="bg-gradient-to-r from-indigo-900/40 via-slate-900 to-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xl relative overflow-hidden">
             <div className="space-y-2 max-w-2xl z-10">
               <div className="flex items-center gap-2">
@@ -344,6 +376,8 @@ export const DashboardPage: React.FC = () => {
               classrooms={classrooms}
               activeSessions={activeSessions}
               isTeacher={isTeacher}
+              studentAttendance={studentAttendance}
+              teacherAttendance={teacherAttendance}
             />
           </section>
 
@@ -491,14 +525,66 @@ export const DashboardPage: React.FC = () => {
             <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                 <Clock className="w-4 h-4 text-indigo-400" />
-                <span>Upcoming Schedule</span>
+                <span>Upcoming Schedule ({upcomingSessions.length})</span>
               </h3>
-              <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl space-y-1">
-                <p className="text-xs text-slate-400 font-medium">No upcoming classes scheduled</p>
-                <p className="text-[11px] text-slate-500">
-                  Scheduled class calendar will be integrated in Phase 3.
-                </p>
-              </div>
+
+              {upcomingSessions.length === 0 ? (
+                <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl space-y-1">
+                  <p className="text-xs text-slate-400 font-medium">No sessions currently scheduled</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+                  {upcomingSessions.map((sess) => (
+                    <div
+                      key={sess.id}
+                      className="p-4 bg-slate-950 border border-slate-800/80 rounded-xl flex items-center justify-between shadow-sm hover:border-slate-700 transition-all"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/50">
+                            SCHEDULED
+                          </span>
+                          {sess.course_code && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                              {sess.course_code}
+                            </span>
+                          )}
+                        </div>
+                        <h4 className="text-sm font-bold text-white leading-tight">{sess.title}</h4>
+                        <p className="text-[11px] text-slate-500">
+                          {sess.scheduled_start_time
+                            ? new Date(sess.scheduled_start_time).toLocaleString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : 'Date TBA'}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isTeacher && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await sessionApi.startSession(sess.id);
+                                navigate(`/classroom/${sess.id}?classId=${sess.classroom_id}`);
+                              } catch (err: any) {
+                                setError(err.message || 'Failed to start scheduled session');
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                            <span>Start Now</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             {/* Completed Class Sessions */}
@@ -564,7 +650,10 @@ export const DashboardPage: React.FC = () => {
               )}
             </section>
           </div>
+          </>
+          )}
         </main>
+
       </div>
 
       {/* MODAL: CREATE CLASSROOM */}

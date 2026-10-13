@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.classroom import Classroom
 from app.models.enums import UserRole
 from app.schemas.classroom import ClassroomCreateSchema, ClassroomResponseSchema
+from app.services.classroom_service import get_authorized_classrooms, get_authorized_classroom_ids
 
 router = APIRouter()
 
@@ -52,25 +53,7 @@ def list_classrooms(
     db: Session = Depends(get_db),
 ):
     """List classrooms accessible to current user."""
-    if current_user.role == UserRole.TEACHER and current_user.teacher_profile:
-        # Teachers see their owned classrooms
-        classrooms = (
-            db.scalars(
-                select(Classroom)
-                .where(Classroom.teacher_id == current_user.teacher_profile.id)
-                .order_by(Classroom.created_at.desc())
-            ).all()
-        )
-    else:
-        # Students see all active classrooms in the system (no enrollment table in Phase 1 schema)
-        classrooms = (
-            db.scalars(
-                select(Classroom)
-                .options(joinedload(Classroom.teacher))
-                .where(Classroom.is_active == True)
-                .order_by(Classroom.created_at.desc())
-            ).all()
-        )
+    classrooms = get_authorized_classrooms(db, current_user)
     
     result = []
     for c in classrooms:
@@ -90,6 +73,13 @@ def get_classroom_detail(
     db: Session = Depends(get_db),
 ):
     """Get classroom details by ID."""
+    authorized_ids = get_authorized_classroom_ids(db, current_user)
+    if classroom_id not in authorized_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Classroom not found.",
+        )
+    
     classroom = db.scalar(
         select(Classroom)
         .options(joinedload(Classroom.teacher))
@@ -105,3 +95,4 @@ def get_classroom_detail(
     if classroom.teacher and classroom.teacher.user:
         item.teacher_name = classroom.teacher.user.full_name
     return item
+

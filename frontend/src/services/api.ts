@@ -13,6 +13,9 @@ import type {
   AttendanceRecordResponse,
   StudentAttendanceSummaryResponse,
   TeacherAttendanceSummaryResponse,
+  TranscriptionResponse,
+  LanguageOption,
+  SessionTranscriptItem,
 } from '../types';
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -163,6 +166,13 @@ export const sessionApi = {
     return handleResponse<ClassSession[]>(res);
   },
 
+  getUpcomingSessions: async (): Promise<ClassSession[]> => {
+    const res = await fetch(`${API_BASE_URL}/sessions/upcoming`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<ClassSession[]>(res);
+  },
+
   joinSession: async (classId: string, sessionId: string): Promise<JoinSessionResponse> => {
     const res = await fetch(`${API_BASE_URL}/classrooms/${classId}/sessions/${sessionId}/join`, {
       method: 'POST',
@@ -264,6 +274,116 @@ export const attendanceApi = {
     return handleResponse<TeacherAttendanceSummaryResponse>(res);
   },
 };
+
+export const analyticsApi = {
+  sampleFrame: async (data: { session_id: string; student_id?: string; image_base64?: string }): Promise<any> => {
+    const res = await fetch(`${API_BASE_URL}/analytics/sample-frame`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<any>(res);
+  },
+
+  analyzeSentiment: async (data: { session_id: string; user_id?: string; text: string }): Promise<any> => {
+    const res = await fetch(`${API_BASE_URL}/analytics/sentiment`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<any>(res);
+  },
+
+  getStudentEngagement: async (sessionId: string, studentId: string): Promise<any> => {
+    const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/student/${studentId}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<any>(res);
+  },
+
+  getSessionOverview: async (sessionId: string): Promise<any> => {
+    const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/overview`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<any>(res);
+  },
+
+  getClassroomFacialWindow: async (sessionId: string): Promise<any> => {
+    const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/facial-window`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<any>(res);
+  },
+
+  getStudentFacialWindow: async (sessionId: string, studentId: string): Promise<any> => {
+    const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/student/${studentId}/facial-window`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<any>(res);
+  },
+
+  getSessionFacialSummary: async (sessionId: string): Promise<any> => {
+    const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/facial-summary`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<any>(res);
+  },
+};
+
+export const transcriptionApi = {
+  getLanguages: async (): Promise<LanguageOption[]> => {
+    const res = await fetch(`${API_BASE_URL}/transcription/languages`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<LanguageOption[]>(res);
+  },
+
+  transcribeAudioFile: async (
+    file: File,
+    options?: { session_id?: string; language?: string; enrich_sentiment?: boolean }
+  ): Promise<TranscriptionResponse> => {
+    const token = localStorage.getItem('edusense_token');
+    const formData = new FormData();
+    formData.append('file', file);
+    if (options?.session_id) formData.append('session_id', options.session_id);
+    if (options?.language) formData.append('language', options.language);
+    if (options?.enrich_sentiment !== undefined) {
+      formData.append('enrich_sentiment', String(options.enrich_sentiment));
+    }
+
+    const res = await fetch(`${API_BASE_URL}/transcription/audio`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: formData,
+    });
+    return handleResponse<TranscriptionResponse>(res);
+  },
+
+  transcribeSnippet: async (data: {
+    audio_base64: string;
+    mime_type?: string;
+    session_id?: string;
+    language?: string;
+    enrich_sentiment?: boolean;
+  }): Promise<TranscriptionResponse> => {
+    const res = await fetch(`${API_BASE_URL}/transcription/snippet`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<TranscriptionResponse>(res);
+  },
+
+  getSessionTranscripts: async (sessionId: string, limit: number = 50): Promise<SessionTranscriptItem[]> => {
+    const res = await fetch(`${API_BASE_URL}/transcription/session/${sessionId}/history?limit=${limit}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<SessionTranscriptItem[]>(res);
+  },
+};
+
 
 
 

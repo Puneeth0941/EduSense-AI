@@ -15,8 +15,18 @@ import {
   type TrackReference,
 } from '@livekit/components-react';
 import { Track, ConnectionState, Participant, RoomEvent } from 'livekit-client';
-import { sessionApi, classroomApi, attendanceApi } from '../services/api';
-import type { JoinSessionResponse, ChatMessage, Classroom, ClassSession, AttendanceVerificationResponse } from '../types';
+import { sessionApi, classroomApi, attendanceApi, analyticsApi, transcriptionApi } from '../services/api';
+
+import type {
+  JoinSessionResponse,
+  ChatMessage,
+  Classroom,
+  ClassSession,
+  AttendanceVerificationResponse,
+  LiveTranscriptMessage,
+  SessionTranscriptItem,
+  TranscriptionResponse,
+} from '../types';
 import { StudentAttendanceStatusBadge } from '../components/StudentAttendanceStatusBadge';
 import { TeacherAttendanceModal } from '../components/TeacherAttendanceModal';
 import {
@@ -34,6 +44,11 @@ import {
   AlertCircle,
   RefreshCw,
   Volume2,
+  BarChart3,
+  Info,
+  Subtitles,
+  Languages,
+  UploadCloud,
 } from 'lucide-react';
 
 export const ClassroomPage: React.FC = () => {
@@ -194,12 +209,39 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
   // UI Drawer states
   const [showParticipants, setShowParticipants] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showFacialWindow, setShowFacialWindow] = useState(false);
+  const [showTranscripts, setShowTranscripts] = useState(false);
   const [showTeacherAttendanceModal, setShowTeacherAttendanceModal] = useState(false);
+  const [facialWindowData, setFacialWindowData] = useState<any>(null);
+
+  // Whisper AI Speech-to-Text & Live Captions states
+  const [isLiveTranscribing, setIsLiveTranscribing] = useState(false);
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<'auto' | 'en' | 'kn' | 'hi'>('auto');
+  const [transcriptTab, setTranscriptTab] = useState<'live' | 'history' | 'upload'>('live');
+  const [liveTranscripts, setLiveTranscripts] = useState<LiveTranscriptMessage[]>([]);
+  const [sessionTranscripts, setSessionTranscripts] = useState<SessionTranscriptItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [latestCaption, setLatestCaption] = useState<LiveTranscriptMessage | null>(null);
+  const captionTimeoutRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const transcriptsBottomRef = useRef<HTMLDivElement>(null);
+  const snippetSeqRef = useRef<number>(0);
+  const latestCaptionSeqRef = useRef<number>(0);
+
+  // Audio Upload on-demand state
+  const [selectedAudioFile, setSelectedAudioFile] = useState<File | null>(null);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [uploadedTranscriptResult, setUploadedTranscriptResult] = useState<TranscriptionResponse | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Local media states
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+
+  // Ref for the local student's video element (BUG 1 FIX)
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Attendance state for student
   const [attendanceData, setAttendanceData] = useState<AttendanceVerificationResponse | null>(null);
@@ -213,18 +255,11 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
     const captureAndVerifyFrame = async () => {
       if (isVerifyingRef.current) return; // Debounce / Throttling
 
-      // Sample base64 image from local student video DOM element
-      const allVideos = Array.from(document.querySelectorAll('video'));
-      // Prefer local participant video element to avoid sampling remote teacher/student video
-      const targetVideo = allVideos.find(v =>
-        v.closest('[data-lk-local-participant="true"]') !== null ||
-        v.getAttribute('data-lk-local-participant') === 'true' ||
-        v.classList.contains('lk-local-participant')
-      ) || allVideos.find(v => v.videoWidth > 0 && v.videoHeight > 0);
-
+      // Direct ref to local student video DOM element
+      const targetVideo = localVideoRef.current;
       let sampleB64: string | null = null;
 
-      if (targetVideo && targetVideo.videoWidth > 0 && targetVideo.videoHeight > 0) {
+      if (targetVideo && targetVideo.videoWidth > 0 && targetVideo.videoHeight > 0 && targetVideo.readyState >= 2) {
         try {
           const canvas = document.createElement('canvas');
           canvas.width = targetVideo.videoWidth;
@@ -269,6 +304,190 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
     };
   }, [isTeacher, isCamOn, sessionId]);
 
+  // Live Facial Analytics state & refs
+  const [analyticsStatus, setAnalyticsStatus] = useState<{
+    active: boolean;
+    lastSampleTime: string | null;
+    attentivenessScore: number | null;
+    orientation: string | null;
+    isDistracted: boolean;
+  }>({
+    active: false,
+    lastSampleTime: null,
+    attentivenessScore: null,
+    orientation: null,
+    isDistracted: false,
+  });
+  const isAnalyticsSamplingRef = useRef(false);
+
+  // Facial Analytics Session relative timer & window refs (BUG 2 FIX)
+  const facialAnalyticsStartTimeRef = useRef<number | null>(null);
+  const currentWindowRef = useRef<number>(0);
+  const sampledSlotsRef = useRef<Set<string>>(new Set());
+
+  // 5-Minute Window Facial Analytics Sampling Effect (Relative Timer)
+  useEffect(() => {
+    if (isTeacher || !isCamOn || !sessionId || connectionState !== ConnectionState.Connected) {
+      setAnalyticsStatus(prev => ({ ...prev, active: false }));
+      return;
+    }
+
+    // Initialize relative start time if not set
+    if (!facialAnalyticsStartTimeRef.current) {
+      facialAnalyticsStartTimeRef.current = Date.now();
+      console.log(`[FACIAL SAMPLER] Analytics relative timer initialized at t=0ms (${new Date().toISOString()})`);
+    }
+
+    const sampleFacialAnalyticsFrame = async (slotLabel: string, slotKey: string, elapsedSec: number) => {
+      if (isAnalyticsSamplingRef.current) return;
+
+      // Direct ref to local student's video element (BUG 1 FIX)
+      const targetVideo = localVideoRef.current;
+
+      if (!targetVideo) {
+        console.warn(`[FACIAL SAMPLER] localVideoRef.current is null when attempting slot ${slotLabel} (elapsed ${elapsedSec.toFixed(1)}s)`);
+        return;
+      }
+
+      if (targetVideo.readyState < 2 || targetVideo.videoWidth === 0 || targetVideo.videoHeight === 0) {
+        console.warn(`[FACIAL SAMPLER] Local video element not ready yet`, {
+          slot: slotLabel,
+          elapsedSec: elapsedSec.toFixed(1) + 's',
+          readyState: targetVideo.readyState,
+          videoWidth: targetVideo.videoWidth,
+          videoHeight: targetVideo.videoHeight,
+        });
+        return;
+      }
+
+      // Mark slotKey as sampled before starting network request to avoid double-sampling
+      sampledSlotsRef.current.add(slotKey);
+
+      let sampleB64: string | null = null;
+      const canvas = document.createElement('canvas');
+      canvas.width = targetVideo.videoWidth;
+      canvas.height = targetVideo.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      try {
+        if (ctx) {
+          ctx.drawImage(targetVideo, 0, 0, canvas.width, canvas.height);
+          sampleB64 = canvas.toDataURL('image/jpeg', 0.80);
+        }
+      } catch (drawErr) {
+        console.warn('[FACIAL SAMPLER] Canvas draw error:', drawErr);
+      }
+
+      if (!sampleB64) return;
+
+      const cameraPub = localParticipant?.getTrackPublication(Track.Source.Camera);
+      const trackSid = cameraPub?.trackSid || cameraPub?.track?.sid || 'unknown';
+      const frameSizeKB = (sampleB64.length / 1024).toFixed(1) + 'KB';
+      const participantEmail = joinData.participant_identity;
+      const participantId = localParticipant?.identity || joinData.participant_identity;
+
+      try {
+        isAnalyticsSamplingRef.current = true;
+        const res = await analyticsApi.sampleFrame({
+          session_id: sessionId,
+          image_base64: sampleB64,
+          slot: slotLabel,
+        } as any);
+
+        // Required diagnostic log format
+        console.log(
+          `[FACIAL SAMPLE]\n` +
+          `slot=${slotLabel}\n` +
+          `elapsed=${elapsedSec.toFixed(1)}s\n` +
+          `participant=${participantEmail}\n` +
+          `participant identity=${participantId}\n` +
+          `camera track SID=${trackSid}\n` +
+          `videoWidth=${targetVideo.videoWidth}\n` +
+          `videoHeight=${targetVideo.videoHeight}\n` +
+          `readyState=${targetVideo.readyState}\n` +
+          `frame size=${frameSizeKB}\n` +
+          `API response=200`
+        );
+
+        const timeStr = new Date().toLocaleTimeString();
+        setAnalyticsStatus({
+          active: true,
+          lastSampleTime: timeStr,
+          attentivenessScore: res.attentiveness_score ?? null,
+          orientation: res.head_pose?.orientation ?? null,
+          isDistracted: !!res.is_distracted,
+        });
+      } catch (err) {
+        console.warn(`[FACIAL ANALYTICS SAMPLER - ${slotLabel}] Sample frame request error:`, err);
+      } finally {
+        isAnalyticsSamplingRef.current = false;
+      }
+    };
+
+    const checkScheduledSample = () => {
+      if (!facialAnalyticsStartTimeRef.current) return;
+
+      const now = Date.now();
+      const totalElapsedSec = (now - facialAnalyticsStartTimeRef.current) / 1000;
+
+      // Determine 5-minute (300-second) window index relative to student start time
+      const windowIndex = Math.floor(totalElapsedSec / 300);
+
+      if (windowIndex > currentWindowRef.current) {
+        currentWindowRef.current = windowIndex;
+        console.log(`[FACIAL SAMPLER] Relative 5-minute window advanced to Window #${windowIndex}`);
+      }
+
+      // Seconds elapsed within current 5-minute window
+      const secInWindow = totalElapsedSec - (windowIndex * 300);
+
+      let slotLabel: string | null = null;
+
+      if (secInWindow >= 5 && secInWindow < 20) {
+        slotLabel = 'sample-1';
+      } else if (secInWindow >= 145 && secInWindow < 160) {
+        slotLabel = 'sample-2';
+      } else if (secInWindow >= 275 && secInWindow < 290) {
+        slotLabel = 'sample-3';
+      }
+
+      if (slotLabel) {
+        const slotKey = `window_${windowIndex}_${slotLabel}`;
+        if (!sampledSlotsRef.current.has(slotKey)) {
+          sampleFacialAnalyticsFrame(slotLabel, slotKey, totalElapsedSec);
+        }
+      }
+    };
+
+    const initialTimeout = setTimeout(checkScheduledSample, 1000);
+    const interval = setInterval(checkScheduledSample, 1000);
+
+    setAnalyticsStatus(prev => ({ ...prev, active: true }));
+
+    return () => {
+      clearTimeout(initialTimeout);
+      clearInterval(interval);
+      setAnalyticsStatus(prev => ({ ...prev, active: false }));
+    };
+  }, [isTeacher, isCamOn, sessionId, connectionState, localParticipant, joinData]);
+
+  // Periodic fetch for Live 5-Minute Window Facial Analytics (Teacher mode)
+  useEffect(() => {
+    if (!isTeacher || !sessionId) return;
+    const fetchWindowData = async () => {
+      try {
+        const res = await analyticsApi.getClassroomFacialWindow(sessionId);
+        setFacialWindowData(res);
+      } catch (err) {
+        // Non-blocking
+      }
+    };
+    fetchWindowData();
+    const interval = setInterval(fetchWindowData, 15000);
+    return () => clearInterval(interval);
+  }, [isTeacher, sessionId]);
+
+
   // Sync initial media states with localParticipant & ensure microphone is active
   useEffect(() => {
     if (localParticipant) {
@@ -292,7 +511,16 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
   const [inputMessage, setInputMessage] = useState('');
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  // Listen for LiveKit Data Messages (Real-time chat & End session events)
+  // Floating caption helper with auto-clear
+  const displayCaption = (caption: LiveTranscriptMessage) => {
+    setLatestCaption(caption);
+    if (captionTimeoutRef.current) clearTimeout(captionTimeoutRef.current);
+    captionTimeoutRef.current = setTimeout(() => {
+      setLatestCaption(null);
+    }, 6000);
+  };
+
+  // Listen for LiveKit Data Messages (Real-time chat, transcripts & End session events)
   useEffect(() => {
     if (!room) return;
 
@@ -311,6 +539,21 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
             timestamp: eventData.timestamp || Date.now(),
           };
           setMessages((prev) => [...prev, newMsg]);
+        } else if (eventData.type === 'TRANSCRIPT') {
+          const tMsg: LiveTranscriptMessage = {
+            id: eventData.id || `${Date.now()}_${Math.random()}`,
+            speakerName: eventData.speakerName || participant?.name || 'Speaker',
+            speakerIdentity: eventData.speakerIdentity || participant?.identity || 'unknown',
+            speakerRole: eventData.speakerRole || 'STUDENT',
+            text: eventData.text,
+            language: eventData.language,
+            sentimentLabel: eventData.sentimentLabel,
+            quality_status: eventData.quality_status,
+            is_low_confidence: eventData.is_low_confidence,
+            timestamp: eventData.timestamp || Date.now(),
+          };
+          setLiveTranscripts((prev) => [...prev, tMsg].sort((a, b) => a.timestamp - b.timestamp));
+          displayCaption(tMsg);
         } else if (eventData.type === 'SESSION_ENDED') {
           alert('The instructor has ended this live class session.');
           room.disconnect();
@@ -327,6 +570,197 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
       room.off('dataReceived', handleDataReceived);
     };
   }, [room, navigate]);
+
+  // Real-time Audio Snippet Recorder for Whisper Speech-to-Text
+  useEffect(() => {
+    if (!isLiveTranscribing || !isMicOn) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+      return;
+    }
+
+    let isCancelled = false;
+    let loopTimeout: any = null;
+
+    const recordAudioSlice = async () => {
+      if (isCancelled || !isLiveTranscribing || !isMicOn) return;
+
+      try {
+        let stream = audioStreamRef.current;
+        const micTrack = localParticipant?.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+
+        if (!stream || !stream.active || (micTrack && !stream.getAudioTracks().includes(micTrack))) {
+          if (micTrack && micTrack.readyState === 'live') {
+            stream = new MediaStream([micTrack]);
+          } else if (navigator?.mediaDevices?.getUserMedia) {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+          audioStreamRef.current = stream;
+        }
+
+        if (!stream || stream.getAudioTracks().length === 0) {
+          loopTimeout = setTimeout(recordAudioSlice, 3000);
+          return;
+        }
+
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+          ? 'audio/ogg;codecs=opus'
+          : '';
+
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        mediaRecorderRef.current = recorder;
+        const chunks: Blob[] = [];
+
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            chunks.push(e.data);
+          }
+        };
+
+        recorder.onstop = async () => {
+          if (isCancelled) return;
+
+          // Seamless restart: immediately begin next slice without dead gap
+          if (!isCancelled && isLiveTranscribing && isMicOn) {
+            recordAudioSlice();
+          }
+
+          if (chunks.length > 0) {
+            const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+            if (blob.size >= 800) {
+              const reader = new FileReader();
+              reader.onloadend = async () => {
+                const b64 = reader.result as string;
+                if (!b64 || isCancelled) return;
+                const seq = ++snippetSeqRef.current;
+                try {
+                  const res = await transcriptionApi.transcribeSnippet({
+                    session_id: sessionId,
+                    audio_base64: b64,
+                    mime_type: blob.type || 'audio/webm',
+                    language: transcriptionLanguage,
+                    enrich_sentiment: true,
+                  });
+
+                  if (res && res.text && res.text.trim()) {
+                    const msg: LiveTranscriptMessage = {
+                      id: res.analysis_id || `${Date.now()}_${seq}`,
+                      speakerName: joinData.participant_name,
+                      speakerIdentity: joinData.participant_identity,
+                      speakerRole: joinData.role,
+                      text: res.text.trim(),
+                      language: res.language,
+                      sentimentLabel: res.sentiment_label,
+                      quality_status: res.quality_status,
+                      is_low_confidence: res.is_low_confidence,
+                      timestamp: Date.now(),
+                    };
+                    setLiveTranscripts((prev) => [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
+                    if (seq >= latestCaptionSeqRef.current) {
+                      latestCaptionSeqRef.current = seq;
+                      displayCaption(msg);
+                    }
+
+                    if (room && localParticipant) {
+                      const encoder = new TextEncoder();
+                      const payload = encoder.encode(JSON.stringify({
+                        type: 'TRANSCRIPT',
+                        ...msg,
+                      }));
+                      localParticipant.publishData(payload, { reliable: true });
+                    }
+                  }
+                } catch (tErr) {
+                  console.warn('[WHISPER STREAM] Snippet transcribe warning:', tErr);
+                }
+              };
+              reader.readAsDataURL(blob);
+            }
+          }
+        };
+
+        recorder.start();
+        setTimeout(() => {
+          if (recorder.state === 'recording') {
+            recorder.stop();
+          }
+        }, 4500);
+      } catch (recErr) {
+        console.warn('[WHISPER RECORDER ERROR]', recErr);
+        if (!isCancelled && isLiveTranscribing && isMicOn) {
+          loopTimeout = setTimeout(recordAudioSlice, 4000);
+        }
+      }
+    };
+
+    recordAudioSlice();
+
+    return () => {
+      isCancelled = true;
+      if (loopTimeout) clearTimeout(loopTimeout);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+    };
+  }, [isLiveTranscribing, isMicOn, transcriptionLanguage, localParticipant, sessionId, room, joinData]);
+
+  // Load saved session transcripts from backend database
+  const loadSessionHistory = async () => {
+    try {
+      setIsLoadingHistory(true);
+      const items = await transcriptionApi.getSessionTranscripts(sessionId);
+      setSessionTranscripts(items);
+    } catch (err) {
+      console.warn('Failed to load session transcripts history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  // Upload on-demand audio file for transcription
+  const handleAudioUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAudioFile) return;
+
+    try {
+      setIsUploadingAudio(true);
+      setUploadError(null);
+      const res = await transcriptionApi.transcribeAudioFile(selectedAudioFile, {
+        session_id: sessionId,
+        language: transcriptionLanguage,
+        enrich_sentiment: true,
+      });
+      setUploadedTranscriptResult(res);
+      if (res.text) {
+        const uploadedMsg: LiveTranscriptMessage = {
+          id: res.analysis_id || `${Date.now()}_${Math.random()}`,
+          speakerName: `${joinData.participant_name} (Upload)`,
+          speakerIdentity: joinData.participant_identity,
+          speakerRole: joinData.role,
+          text: res.text,
+          language: res.language,
+          sentimentLabel: res.sentiment_label,
+          quality_status: res.quality_status,
+          is_low_confidence: res.is_low_confidence,
+          timestamp: Date.now(),
+        };
+        setLiveTranscripts((prev) => [...prev, uploadedMsg].sort((a, b) => a.timestamp - b.timestamp));
+        displayCaption(uploadedMsg);
+      }
+    } catch (err: any) {
+      setUploadError(err.message || 'Failed to transcribe audio file');
+    } finally {
+      setIsUploadingAudio(false);
+    }
+  };
+
+  // Auto-scroll transcripts
+  useEffect(() => {
+    transcriptsBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [liveTranscripts]);
 
   // Periodic poll check for session status (Constraint 3: Ensure clients redirect when session ended in DB)
   useEffect(() => {
@@ -634,11 +1068,31 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
         <div className="flex items-center gap-4">
           {/* Attendance Status Badge / Roster Button */}
           {!isTeacher ? (
-            <StudentAttendanceStatusBadge
-              isCamOn={isCamOn}
-              isVerifying={isVerifyingAttendance}
-              attendanceData={attendanceData}
-            />
+            <>
+              <StudentAttendanceStatusBadge
+                isCamOn={isCamOn}
+                isVerifying={isVerifyingAttendance}
+                attendanceData={attendanceData}
+              />
+              {/* Live Facial Analytics Sampling Development Status Indicator */}
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs shadow-sm">
+                <span className={`w-2 h-2 rounded-full ${analyticsStatus.active ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                <span className="font-semibold text-slate-300">Analytics:</span>
+                <span className={analyticsStatus.active ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                  {analyticsStatus.active ? 'Active (4s)' : 'Paused'}
+                </span>
+                {analyticsStatus.lastSampleTime && (
+                  <span className="text-[11px] text-slate-400">
+                    | {analyticsStatus.lastSampleTime}
+                  </span>
+                )}
+                {analyticsStatus.attentivenessScore !== null && (
+                  <span className="text-[11px] text-indigo-300 font-semibold">
+                    | Attentiveness: {Math.round(analyticsStatus.attentivenessScore * 100)}%
+                  </span>
+                )}
+              </div>
+            </>
           ) : (
             <button
               onClick={() => setShowTeacherAttendanceModal(true)}
@@ -648,6 +1102,7 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
               <span>Attendance Roster</span>
             </button>
           )}
+
 
           {/* Audio Speaker Test & Unmute Button */}
           <button
@@ -705,7 +1160,12 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
               {/* Strip of small participant tiles */}
               <div className="h-32 flex gap-3 overflow-x-auto pb-2">
                 {participants.map((p) => (
-                  <ParticipantTile key={p.sid} participant={p} compact />
+                  <ParticipantTile
+                    key={p.sid}
+                    participant={p}
+                    compact
+                    videoRef={p.isLocal ? localVideoRef : undefined}
+                  />
                 ))}
               </div>
             </div>
@@ -725,8 +1185,55 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
               }`}
             >
               {participants.map((p) => (
-                <ParticipantTile key={p.sid} participant={p} />
+                <ParticipantTile
+                  key={p.sid}
+                  participant={p}
+                  videoRef={p.isLocal ? localVideoRef : undefined}
+                />
               ))}
+            </div>
+          )}
+
+          {/* FLOATING LIVE CAPTION BAR */}
+          {latestCaption && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 max-w-2xl w-[90%] z-20 pointer-events-none transition-all duration-300">
+              <div className="bg-slate-900/95 backdrop-blur-md border border-slate-700/80 px-4 py-3 rounded-2xl shadow-2xl flex items-start gap-3 pointer-events-auto">
+                <div className="w-8 h-8 rounded-full bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 flex items-center justify-center font-bold text-xs uppercase shrink-0 mt-0.5">
+                  {latestCaption.speakerName.substring(0, 2)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-xs font-bold text-white">{latestCaption.speakerName}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase ${
+                      latestCaption.speakerRole === 'TEACHER' ? 'bg-purple-900/60 text-purple-300 border border-purple-700/50' : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50'
+                    }`}>
+                      {latestCaption.speakerRole}
+                    </span>
+                    {latestCaption.language && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+                        {latestCaption.language.toUpperCase()}
+                      </span>
+                    )}
+                    {latestCaption.sentimentLabel && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                        latestCaption.sentimentLabel === 'POSITIVE' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/40' :
+                        latestCaption.sentimentLabel === 'NEGATIVE' ? 'bg-rose-950 text-rose-300 border border-rose-800/40' :
+                        'bg-slate-800 text-slate-300'
+                      }`}>
+                        {latestCaption.sentimentLabel}
+                      </span>
+                    )}
+                    {latestCaption.is_low_confidence && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/40">
+                        Low Confidence (Please Retry)
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm font-medium text-slate-100 leading-snug">
+                    "{latestCaption.text}"
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </main>
@@ -851,6 +1358,387 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
             </form>
           </aside>
         )}
+
+        {/* RIGHT DRAWER: 5-MINUTE FACIAL WINDOW ANALYTICS (TEACHER ONLY) */}
+        {showFacialWindow && isTeacher && (
+          <aside className="w-80 bg-slate-900 border-l border-slate-800 flex flex-col z-10 shrink-0">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-indigo-400" />
+                <span>5-Minute Facial Analytics</span>
+              </h3>
+              <button
+                onClick={() => setShowFacialWindow(false)}
+                className="text-slate-400 hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-2">
+                <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider">
+                  Current 5-Minute Window
+                </span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xl font-extrabold text-white uppercase">
+                    {facialWindowData?.dominant_expression || 'NEUTRAL'}
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    {facialWindowData?.students_with_valid_expression || 0} / {facialWindowData?.students_analyzed || 0} students
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Window: {facialWindowData?.window_start ? new Date(facialWindowData.window_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '00:00'} – {facialWindowData?.window_end ? new Date(facialWindowData.window_end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '05:00'}
+                </div>
+              </div>
+
+              {/* Distribution Breakdown */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Expression Distribution
+                </h4>
+                {['neutral', 'happy', 'sad', 'angry', 'fear'].map((em) => {
+                  const pct = Math.round((facialWindowData?.expression_distribution?.[em] || 0) * 100);
+                  return (
+                    <div key={em} className="space-y-1">
+                      <div className="flex justify-between text-xs capitalize text-slate-300">
+                        <span>{em}</span>
+                        <span className="font-bold text-indigo-300">{pct}%</span>
+                      </div>
+                      <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                        <div
+                          className="bg-indigo-500 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="p-3 bg-amber-950/30 border border-amber-800/40 rounded-xl flex items-start gap-2 text-[11px] text-amber-300/90 leading-relaxed">
+                <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <span>
+                  Facial-expression classification is based on visible facial characteristics and should be interpreted as a supportive classroom indicator.
+                </span>
+              </div>
+            </div>
+          </aside>
+        )}
+
+        {/* RIGHT DRAWER: TRANSCRIPTS & LIVE CAPTIONS */}
+        {showTranscripts && (
+          <aside className="w-96 bg-slate-900 border-l border-slate-800 flex flex-col z-10 shrink-0">
+            {/* Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <Subtitles className="w-4 h-4 text-indigo-400" />
+                <span>Speech-to-Text & Captions</span>
+              </h3>
+              <button
+                onClick={() => setShowTranscripts(false)}
+                className="text-slate-400 hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Sub-tabs: Live, History, Upload */}
+            <div className="flex border-b border-slate-800 bg-slate-950/60 p-1 gap-1">
+              <button
+                onClick={() => setTranscriptTab('live')}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  transcriptTab === 'live' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Live Speech
+              </button>
+              <button
+                onClick={() => {
+                  setTranscriptTab('history');
+                  loadSessionHistory();
+                }}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  transcriptTab === 'history' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                History ({sessionTranscripts.length})
+              </button>
+              <button
+                onClick={() => setTranscriptTab('upload')}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  transcriptTab === 'upload' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Upload Audio
+              </button>
+            </div>
+
+            {/* Tab 1: Live Speech */}
+            {transcriptTab === 'live' && (
+              <div className="flex-1 flex flex-col min-h-0">
+                {/* Control Panel: Language Selector & Live Toggle */}
+                <div className="p-3 bg-slate-950 border-b border-slate-800/80 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs text-slate-300 font-medium">
+                      <Languages className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Target Language:</span>
+                    </div>
+                    <select
+                      value={transcriptionLanguage}
+                      onChange={(e) => setTranscriptionLanguage(e.target.value as any)}
+                      className="bg-slate-900 border border-slate-700 text-xs text-white rounded-lg px-2.5 py-1 focus:outline-none focus:border-indigo-500 font-medium"
+                    >
+                      <option value="auto">Auto-Detect</option>
+                      <option value="en">English (en)</option>
+                      <option value="kn">Kannada (kn)</option>
+                      <option value="hi">Hindi (hi)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${isLiveTranscribing ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+                      <span className="text-xs font-semibold text-slate-200">
+                        {isLiveTranscribing ? 'Live Transcription Active' : 'Live Transcription Paused'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setIsLiveTranscribing(!isLiveTranscribing)}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                        isLiveTranscribing
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
+                          : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-md shadow-indigo-600/20'
+                      }`}
+                    >
+                      {isLiveTranscribing ? 'Stop' : 'Start'}
+                    </button>
+                  </div>
+
+                  {isLiveTranscribing && !isMicOn && (
+                    <div className="text-[11px] text-amber-400 bg-amber-950/40 border border-amber-800/40 rounded-lg p-2">
+                      ⚠️ Microphone is currently muted. Unmute to transcribe your speech.
+                    </div>
+                  )}
+                </div>
+
+                {/* Transcripts Stream */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 min-h-0">
+                  {liveTranscripts.length === 0 ? (
+                    <div className="text-center text-slate-500 text-xs py-12 px-4 space-y-2">
+                      <Subtitles className="w-8 h-8 text-slate-600 mx-auto opacity-50" />
+                      <p className="font-medium text-slate-400">No live speech transcribed yet</p>
+                      <p className="text-[11px] text-slate-500">
+                        Enable Live Transcription and speak with your mic on. Transcripts will appear in real time for everyone in the classroom!
+                      </p>
+                    </div>
+                  ) : (
+                    liveTranscripts.map((t) => (
+                      <div
+                        key={t.id}
+                        className="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl space-y-1.5 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-white">{t.speakerName}</span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase ${
+                              t.speakerRole === 'TEACHER' ? 'bg-purple-900/60 text-purple-300' : 'bg-emerald-900/60 text-emerald-300'
+                            }`}>
+                              {t.speakerRole}
+                            </span>
+                          </div>
+                          <span className="text-slate-500 font-mono text-[10px]">
+                            {new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-200 leading-relaxed font-sans">
+                          "{t.text}"
+                        </p>
+                        <div className="flex items-center gap-2 pt-0.5">
+                          {t.language && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800">
+                              {t.language.toUpperCase()}
+                            </span>
+                          )}
+                          {t.sentimentLabel && (
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                              t.sentimentLabel === 'POSITIVE' ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' :
+                              t.sentimentLabel === 'NEGATIVE' ? 'bg-rose-950 text-rose-400 border border-rose-900' :
+                              'bg-slate-900 text-slate-400 border border-slate-800'
+                            }`}>
+                              {t.sentimentLabel}
+                            </span>
+                          )}
+                          {t.is_low_confidence && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/40">
+                              Low Confidence
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  <div ref={transcriptsBottomRef} />
+                </div>
+              </div>
+            )}
+
+            {/* Tab 2: Session Transcripts History */}
+            {transcriptTab === 'history' && (
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="p-3 bg-slate-950 border-b border-slate-800/80 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-300">
+                    Saved Session Transcripts
+                  </span>
+                  <button
+                    onClick={loadSessionHistory}
+                    disabled={isLoadingHistory}
+                    className="flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingHistory ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 min-h-0">
+                  {isLoadingHistory ? (
+                    <div className="text-center text-slate-500 text-xs py-8">
+                      Loading session transcripts...
+                    </div>
+                  ) : sessionTranscripts.length === 0 ? (
+                    <div className="text-center text-slate-500 text-xs py-8">
+                      No saved transcripts recorded for this session yet.
+                    </div>
+                  ) : (
+                    sessionTranscripts.map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-semibold text-indigo-300">{item.speaker_name}</span>
+                          <span className="text-slate-500 text-[10px]">
+                            {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-200 leading-relaxed font-sans">
+                          "{item.text}"
+                        </p>
+                        <div className="flex items-center gap-2 pt-0.5">
+                          {item.language && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800">
+                              {item.language.toUpperCase()}
+                            </span>
+                          )}
+                          {item.sentiment_label && (
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                              item.sentiment_label === 'POSITIVE' ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' :
+                              item.sentiment_label === 'NEGATIVE' ? 'bg-rose-950 text-rose-400 border border-rose-900' :
+                              'bg-slate-900 text-slate-400 border border-slate-800'
+                            }`}>
+                              {item.sentiment_label}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Tab 3: Upload Audio File */}
+            {transcriptTab === 'upload' && (
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+                <form onSubmit={handleAudioUpload} className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-300">Target Language</label>
+                    <select
+                      value={transcriptionLanguage}
+                      onChange={(e) => setTranscriptionLanguage(e.target.value as any)}
+                      className="w-full bg-slate-950 border border-slate-800 text-xs text-white rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="auto">Auto-Detect</option>
+                      <option value="en">English (en)</option>
+                      <option value="kn">Kannada (kn)</option>
+                      <option value="hi">Hindi (hi)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-300">Select Audio File</label>
+                    <input
+                      type="file"
+                      accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg,.flac"
+                      onChange={(e) => setSelectedAudioFile(e.target.files?.[0] || null)}
+                      className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-white hover:file:bg-slate-700 bg-slate-950 border border-slate-800 rounded-xl p-2 cursor-pointer"
+                    />
+                  </div>
+
+                  {uploadError && (
+                    <div className="p-2.5 bg-rose-950/40 border border-rose-800/40 rounded-xl text-xs text-rose-300">
+                      {uploadError}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={!selectedAudioFile || isUploadingAudio}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-xs rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
+                  >
+                    {isUploadingAudio ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Transcribing with Whisper AI...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud className="w-4 h-4" />
+                        <span>Transcribe Audio File</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                {uploadedTranscriptResult && (
+                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-indigo-400">Transcription Result</span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Lang: {uploadedTranscriptResult.language.toUpperCase()} | {uploadedTranscriptResult.duration.toFixed(1)}s
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-200 leading-relaxed font-sans bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                      "{uploadedTranscriptResult.text}"
+                    </p>
+                    {uploadedTranscriptResult.is_low_confidence && (
+                      <div className="p-2.5 bg-amber-950/40 border border-amber-800/40 rounded-xl text-xs text-amber-300">
+                        ⚠️ Low recognition confidence. Spoken audio may contain background noise or unclear speech. Please retry if inaccurate.
+                      </div>
+                    )}
+                    {uploadedTranscriptResult.segments && uploadedTranscriptResult.segments.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Timestamped Segments ({uploadedTranscriptResult.segments.length})
+                        </span>
+                        <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                          {uploadedTranscriptResult.segments.map((seg) => (
+                            <div key={seg.id} className="text-[11px] text-slate-300 flex items-start gap-1.5">
+                              <span className="text-slate-500 font-mono shrink-0">
+                                [{seg.start.toFixed(1)}s - {seg.end.toFixed(1)}s]
+                              </span>
+                              <span>{seg.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
 
       {/* 3. BOTTOM CONTROL BAR */}
@@ -902,6 +1790,8 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
             onClick={() => {
               setShowParticipants(!showParticipants);
               if (showChat) setShowChat(false);
+              if (showFacialWindow) setShowFacialWindow(false);
+              if (showTranscripts) setShowTranscripts(false);
             }}
             className={`px-4 py-2.5 rounded-xl font-medium text-xs flex items-center gap-2 transition-all ${
               showParticipants ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -916,6 +1806,8 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
             onClick={() => {
               setShowChat(!showChat);
               if (showParticipants) setShowParticipants(false);
+              if (showFacialWindow) setShowFacialWindow(false);
+              if (showTranscripts) setShowTranscripts(false);
             }}
             className={`px-4 py-2.5 rounded-xl font-medium text-xs flex items-center gap-2 transition-all ${
               showChat ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -924,6 +1816,43 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
             <MessageSquare className="w-4 h-4" />
             <span>Chat</span>
           </button>
+
+          {/* Live Captions & Transcripts Toggle */}
+          <button
+            onClick={() => {
+              setShowTranscripts(!showTranscripts);
+              if (showParticipants) setShowParticipants(false);
+              if (showChat) setShowChat(false);
+              if (showFacialWindow) setShowFacialWindow(false);
+            }}
+            className={`px-4 py-2.5 rounded-xl font-medium text-xs flex items-center gap-2 transition-all ${
+              showTranscripts ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Subtitles className="w-4 h-4" />
+            <span>Transcripts</span>
+            {isLiveTranscribing && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+            )}
+          </button>
+
+          {/* Teacher Facial Analytics Window Toggle */}
+          {isTeacher && (
+            <button
+              onClick={() => {
+                setShowFacialWindow(!showFacialWindow);
+                if (showChat) setShowChat(false);
+                if (showParticipants) setShowParticipants(false);
+                if (showTranscripts) setShowTranscripts(false);
+              }}
+              className={`px-4 py-2.5 rounded-xl font-medium text-xs flex items-center gap-2 transition-all ${
+                showFacialWindow ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>Facial Analytics</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -960,9 +1889,14 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
 };
 
 // PARTICIPANT VIDEO TILE COMPONENT
-const ParticipantTile: React.FC<{ participant: Participant; compact?: boolean }> = ({
+const ParticipantTile: React.FC<{
+  participant: Participant;
+  compact?: boolean;
+  videoRef?: React.Ref<HTMLVideoElement>;
+}> = ({
   participant,
   compact = false,
+  videoRef,
 }) => {
   const cameraPub = participant.getTrackPublication(Track.Source.Camera);
   const micPub = participant.getTrackPublication(Track.Source.Microphone);
@@ -995,7 +1929,11 @@ const ParticipantTile: React.FC<{ participant: Participant; compact?: boolean }>
     >
       {/* Video Track Rendering */}
       {cameraTrack ? (
-        <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover" />
+        <VideoTrack
+          ref={videoRef}
+          trackRef={cameraTrack}
+          className="w-full h-full object-cover"
+        />
       ) : (
         /* Fallback Avatar */
         <div className="flex flex-col items-center gap-3 p-4">

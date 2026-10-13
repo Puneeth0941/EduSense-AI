@@ -173,5 +173,194 @@ export interface TeacherAttendanceSummaryResponse {
   overall_attendance_rate: number;
 }
 
+export interface FacialAnalysisResult {
+  valid_input: boolean;
+  face_detected: boolean;
+  attentiveness_score: number;
+  head_pose: {
+    pitch: number;
+    yaw: number;
+    roll: number;
+    orientation: string;
+  };
+  dominant_emotion: string;
+  emotion_probabilities: Record<string, number>;
+  emotion_model_loaded: boolean;
+  is_distracted: boolean;
+  distraction_type?: string | null;
+  confidence: number;
+}
 
+export interface SentimentAnalysisResult {
+  valid_input: boolean;
+  text: string;
+  sentiment_score: number;
+  sentiment_label: string;
+  is_question: boolean;
+  is_confusion: boolean;
+  confidence: number;
+}
 
+export interface RecentTranscriptSnippet {
+  id: string;
+  timestamp: string;
+  transcript_text: string;
+  language?: string | null;
+  sentiment_label?: string | null;
+  sentiment_score?: number | null;
+}
+
+export interface StudentSpeechSentimentSummary {
+  student_id: string;
+  total_segments: number;
+  valid_analyzed_segments: number;
+  unsupported_language_segments: number;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  confused_count: number;
+  positive_percentage: number;
+  negative_percentage: number;
+  neutral_percentage: number;
+  confused_percentage: number;
+  dominant_sentiment?: string | null;
+  dominant_status: 'no_transcripts' | 'insufficient_data' | 'unsupported_language' | 'analyzed';
+  dominant_language?: string | null;
+  recent_snippets: RecentTranscriptSnippet[];
+}
+
+export interface ClassroomSpeechSentimentSummary {
+  session_id: string;
+  total_student_transcripts: number;
+  valid_analyzed_transcripts: number;
+  unsupported_language_transcripts: number;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  confused_count: number;
+  positive_percentage: number;
+  negative_percentage: number;
+  neutral_percentage: number;
+  confused_percentage: number;
+  dominant_sentiment?: string | null;
+  status: 'no_transcripts' | 'insufficient_data' | 'unsupported_language' | 'active';
+}
+
+export interface StudentFacialSummary {
+  student_id: string;
+  dominant_expression: string;
+  expression_distribution: Record<string, number>;
+  total_samples: number;
+  valid_samples: number;
+  valid_windows: number;
+  attentiveness_score?: number | null;
+  head_pose_orientation?: string | null;
+  status: 'analyzed' | 'insufficient_data';
+}
+
+export interface StudentEngagementSummary {
+  student_id: string;
+  session_id: string;
+  student_name?: string | null;
+  student_email?: string | null;
+  student_id_number?: string | null;
+  composite_score?: number | null;
+  attentiveness_subscore?: number | null;
+  participation_subscore?: number | null;
+  sentiment_subscore?: number | null;
+  sample_count: number;
+  distraction_count: number;
+  question_count: number;
+  speech_sentiment?: StudentSpeechSentimentSummary | null;
+  facial_summary?: StudentFacialSummary | null;
+}
+
+export interface SessionAnalyticsOverview {
+  session_id: string;
+  average_engagement: number;
+  attendance_rate: number;
+  total_distractions: number;
+  total_questions: number;
+  student_summaries: StudentEngagementSummary[];
+  classroom_speech_sentiment?: ClassroomSpeechSentimentSummary | null;
+}
+
+export interface FacialWindowAnalytics {
+  window_start: string;
+  window_end: string;
+  dominant_expression: string;
+  expression_distribution: Record<string, number>;
+  students_analyzed: number;
+  students_with_valid_expression: number;
+  students_with_insufficient_data: number;
+}
+
+export interface StudentFacialWindowAnalytics {
+  window_start: string;
+  window_end: string;
+  student_id: string;
+  dominant_expression: string;
+  confidence: number;
+  sample_count: number;
+  valid_sample_count: number;
+  expression_probabilities: Record<string, number>;
+}
+
+export interface SessionFacialSummary {
+  session_id: string;
+  dominant_expression: string;
+  expression_distribution: Record<string, number>;
+  total_windows: number;
+  valid_windows: number;
+}
+export interface TranscriptSegment {
+  id: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface TranscriptionResponse {
+  text: string;
+  language: string;
+  language_probability: number;
+  duration: number;
+  segments: TranscriptSegment[];
+  sentiment_label?: string | null;
+  sentiment_score?: number | null;
+  is_question?: boolean | null;
+  is_confusion?: boolean | null;
+  analysis_id?: string | null;
+  quality_status?: string | null;
+  is_low_confidence?: boolean;
+  error?: string | null;
+}
+
+export interface LanguageOption {
+  code: string;
+  name: string;
+}
+
+export interface SessionTranscriptItem {
+  id: string;
+  speaker_name: string;
+  speaker_role: string;
+  text: string;
+  language?: string | null;
+  sentiment_label?: string | null;
+  sentiment_score?: number | null;
+  created_at: string;
+}
+
+export interface LiveTranscriptMessage {
+  id: string;
+  speakerName: string;
+  speakerIdentity: string;
+  speakerRole: string;
+  text: string;
+  language?: string | null;
+  sentimentLabel?: string | null;
+  timestamp: number;
+  quality_status?: string | null;
+  is_low_confidence?: boolean;
+}

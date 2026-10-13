@@ -56,5 +56,23 @@ class LiveKitService:
         token_str = token.to_jwt()
         return token_str, self.url, participant_identity
 
+    async def is_room_active(self, room_name: str) -> bool:
+        """
+        Check if a LiveKit room is actively alive on the LiveKit server with participant presence.
+        Returns True if the room exists on the server and has num_participants > 0.
+        """
+        try:
+            lk = api.LiveKitAPI(self.url, self.api_key, self.api_secret)
+            try:
+                res = await lk.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
+                if res.rooms and res.rooms[0].num_participants > 0:
+                    return True
+                return False
+            finally:
+                await lk.aclose()
+        except Exception as e:
+            logger.warning(f"Failed to query LiveKit server for room {room_name}: {e}")
+            return False
+
 
 livekit_service = LiveKitService()
