@@ -33,6 +33,7 @@ class FacialAnalysisResult(BaseModel):
     dominant_emotion: str = "neutral"
     emotion_probabilities: Dict[str, float] = Field(default_factory=dict)
     emotion_model_loaded: bool = False
+    emotion_backend: Optional[str] = None  # "emotiefflib", "ferplus", or "none"
     is_distracted: bool = False
     distraction_type: Optional[str] = None
     confidence: float = 0.0

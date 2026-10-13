@@ -26,12 +26,13 @@ from app.schemas.analytics import (
 
 
 def test_facial_emotion_analyzer():
-    print("Testing FacialEmotionAnalyzer with ONNX FERPlus Model...")
+    print("Testing FacialEmotionAnalyzer with EmotiEffLib (primary) + FERPlus (fallback)...")
     analyzer = FacialEmotionAnalyzer()
 
-    # Verify ONNX model is loaded safely
+    # Verify primary model loaded (EmotiEffLib ONNX backend)
     assert analyzer.emotion_model_loaded is True
-    assert analyzer.session is not None
+    # Backend should be 'emotiefflib' (primary) or 'ferplus' (if EmotiEffLib unavailable)
+    assert analyzer.backend in ["emotiefflib", "ferplus"]
 
     # 1. Invalid / Empty input
     res_none = analyzer.analyze_frame(None)
@@ -50,6 +51,8 @@ def test_facial_emotion_analyzer():
     assert res_no_face["is_distracted"] is True
     assert res_no_face["distraction_type"] == "no_face_detected"
     assert res_no_face["emotion_model_loaded"] is True
+    # emotion_backend field must be present
+    assert "emotion_backend" in res_no_face
 
     # 3. Synthetic face frame (Circle drawn to simulate a face)
     face_frame = np.zeros((400, 400, 3), dtype=np.uint8)
@@ -58,27 +61,53 @@ def test_facial_emotion_analyzer():
     assert res_face["valid_input"] is True
     assert res_face["face_detected"] is True
 
-    # Verify Head-Pose Analytics Preservation
+    # Verify Head-Pose Analytics Preservation (unchanged)
     assert "pitch" in res_face["head_pose"]
     assert "yaw" in res_face["head_pose"]
     assert "roll" in res_face["head_pose"]
     assert "orientation" in res_face["head_pose"]
     assert 0.0 <= res_face["attentiveness_score"] <= 1.0
 
-    # Verify ONNX FERPlus Expression Inference Output
+    # Verify emotion inference output (dual-backend compatible)
     assert res_face["emotion_model_loaded"] is True
-    assert res_face["dominant_emotion"] in ["neutral", "happy", "sad", "angry", "fear", "uncertain"]
-    assert len(res_face["emotion_probabilities"]) == 8
+    assert res_face["dominant_emotion"] in [
+        "neutral", "happy", "sad", "angry", "fear", "uncertain"
+    ]
+    # EmotiEffLib backend returns 5-class EduSense map; FERPlus returns 5-class map too
+    assert len(res_face["emotion_probabilities"]) == 5
     assert "neutral" in res_face["emotion_probabilities"]
     assert "happy" in res_face["emotion_probabilities"]
+    assert "sad" in res_face["emotion_probabilities"]
+    assert "angry" in res_face["emotion_probabilities"]
+    assert "fear" in res_face["emotion_probabilities"]
+    # raw_dominant is present
+    assert "raw_dominant" in res_face
+    # emotion_backend is present
+    assert res_face.get("emotion_backend") in ["emotiefflib", "ferplus"]
 
-    # 4. Non-existent model fallback safety check (Must NOT crash, sets emotion_model_loaded=False)
-    fallback_analyzer = FacialEmotionAnalyzer(emotion_model_path="non_existent_model.onnx")
-    assert fallback_analyzer.emotion_model_loaded is False
-    res_fallback = fallback_analyzer.analyze_frame(cv2_img)
+    # 4. FERPlus fallback via force_ferplus=True — must NOT crash
+    ferplus_analyzer = FacialEmotionAnalyzer(force_ferplus=True)
+    # FERPlus ONNX model is in ai/models/emotion-ferplus.onnx
+    assert ferplus_analyzer.backend == "ferplus"
+    assert ferplus_analyzer.emotion_model_loaded is True
+    res_ferplus = ferplus_analyzer.analyze_frame(cv2_img)
+    assert res_ferplus["valid_input"] is True
+    assert res_ferplus["face_detected"] is True
+    assert res_ferplus["emotion_backend"] == "ferplus"
+    assert len(res_ferplus["emotion_probabilities"]) == 5
+
+    # 5. Non-existent ONNX path + no EmotiEffLib -> emotion_model_loaded=False
+    no_model_analyzer = FacialEmotionAnalyzer(
+        emotion_model_path="non_existent_model.onnx",
+        force_ferplus=True,
+    )
+    assert no_model_analyzer.emotion_model_loaded is False
+    res_fallback = no_model_analyzer.analyze_frame(cv2_img)
     assert res_fallback["valid_input"] is True
     assert res_fallback["face_detected"] is True
     assert res_fallback["emotion_model_loaded"] is False
+    # pose fallback: still returns 5-class map
+    assert len(res_fallback["emotion_probabilities"]) == 5
 
     print("✓ FacialEmotionAnalyzer tests passed successfully.")
 
