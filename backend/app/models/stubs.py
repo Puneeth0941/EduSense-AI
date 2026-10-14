@@ -105,6 +105,10 @@ class FacialAnalysis(Base):
     attentiveness_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     head_pose: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     emotion_probabilities: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    emotion_backend: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    raw_dominant: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    prediction_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
 
 class SpeechAnalysis(Base):

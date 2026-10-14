@@ -39,19 +39,22 @@ def test_facial_emotion_analyzer():
     assert res_none["valid_input"] is False
     assert res_none["face_detected"] is False
     assert res_none["attentiveness_score"] == 0.0
+    assert res_none["confidence"] == 0.0
+    assert res_none["prediction_status"] == "invalid_input"
 
     res_empty = analyzer.analyze_frame(np.array([]))
     assert res_empty["valid_input"] is False
+    assert res_empty["confidence"] == 0.0
 
-    # 2. Synthetic black frame (No face detected)
-    black_frame = np.zeros((300, 300, 3), dtype=np.uint8)
-    res_no_face = analyzer.analyze_frame(black_frame)
+    # 2. Lit blank frame (No face detected)
+    no_face_frame = np.full((300, 300, 3), 128, dtype=np.uint8)
+    res_no_face = analyzer.analyze_frame(no_face_frame)
     assert res_no_face["valid_input"] is True
     assert res_no_face["face_detected"] is False
     assert res_no_face["is_distracted"] is True
     assert res_no_face["distraction_type"] == "no_face_detected"
-    assert res_no_face["emotion_model_loaded"] is True
-    # emotion_backend field must be present
+    assert res_no_face["confidence"] == 0.0  # Confirmed fix: confidence must be 0.0, NOT 0.9!
+    assert res_no_face["prediction_status"] == "no_face"
     assert "emotion_backend" in res_no_face
 
     # 3. Synthetic face frame (Circle drawn to simulate a face)
@@ -60,8 +63,9 @@ def test_facial_emotion_analyzer():
     res_face = analyzer.analyze_frame(cv2_img)
     assert res_face["valid_input"] is True
     assert res_face["face_detected"] is True
+    assert res_face["prediction_status"] in ["valid_prediction", "low_confidence"]
 
-    # Verify Head-Pose Analytics Preservation (unchanged)
+    # Verify Head-Pose Analytics Preservation
     assert "pitch" in res_face["head_pose"]
     assert "yaw" in res_face["head_pose"]
     assert "roll" in res_face["head_pose"]
@@ -73,21 +77,19 @@ def test_facial_emotion_analyzer():
     assert res_face["dominant_emotion"] in [
         "neutral", "happy", "sad", "angry", "fear", "uncertain"
     ]
-    # EmotiEffLib backend returns 5-class EduSense map; FERPlus returns 5-class map too
     assert len(res_face["emotion_probabilities"]) == 5
     assert "neutral" in res_face["emotion_probabilities"]
     assert "happy" in res_face["emotion_probabilities"]
     assert "sad" in res_face["emotion_probabilities"]
     assert "angry" in res_face["emotion_probabilities"]
     assert "fear" in res_face["emotion_probabilities"]
-    # raw_dominant is present
     assert "raw_dominant" in res_face
-    # emotion_backend is present
+    assert "raw_emotion_probabilities" in res_face
     assert res_face.get("emotion_backend") in ["emotiefflib", "ferplus"]
+    assert "inference_latency_ms" in res_face
 
     # 4. FERPlus fallback via force_ferplus=True — must NOT crash
     ferplus_analyzer = FacialEmotionAnalyzer(force_ferplus=True)
-    # FERPlus ONNX model is in ai/models/emotion-ferplus.onnx
     assert ferplus_analyzer.backend == "ferplus"
     assert ferplus_analyzer.emotion_model_loaded is True
     res_ferplus = ferplus_analyzer.analyze_frame(cv2_img)
@@ -95,6 +97,7 @@ def test_facial_emotion_analyzer():
     assert res_ferplus["face_detected"] is True
     assert res_ferplus["emotion_backend"] == "ferplus"
     assert len(res_ferplus["emotion_probabilities"]) == 5
+    assert res_ferplus["confidence"] >= 0.0
 
     # 5. Non-existent ONNX path + no EmotiEffLib -> emotion_model_loaded=False
     no_model_analyzer = FacialEmotionAnalyzer(
@@ -106,21 +109,43 @@ def test_facial_emotion_analyzer():
     assert res_fallback["valid_input"] is True
     assert res_fallback["face_detected"] is True
     assert res_fallback["emotion_model_loaded"] is False
-    # pose fallback: still returns 5-class map
-    assert len(res_fallback["emotion_probabilities"]) == 5
+    assert res_fallback["confidence"] == 0.0
+    assert res_fallback["prediction_status"] == "model_error"
+    # Fallback NEVER fabricates neutral 1.0!
+    assert res_fallback["dominant_emotion"] == "uncertain"
+    assert res_fallback["emotion_probabilities"]["neutral"] == 0.0
+
+    # 6. Ambiguous multiple faces test
+    multi_frame = np.zeros((400, 600, 3), dtype=np.uint8)
+    cv2_draw_synthetic_face_at(multi_frame, 100, 200, 70)
+    cv2_draw_synthetic_face_at(multi_frame, 500, 200, 70)
+    res_multi = analyzer.analyze_frame(multi_frame)
+    assert res_multi["prediction_status"] == "ambiguous_face"
+    assert res_multi["dominant_emotion"] == "uncertain"
+    assert res_multi["confidence"] == 0.0
+
+    # 7. Low light / poor quality check
+    dim_frame = np.full((300, 300, 3), 10, dtype=np.uint8)
+    res_dim = analyzer.analyze_frame(dim_frame)
+    assert res_dim["prediction_status"] == "poor_image_quality"
+    assert res_dim["quality_status"] == "poor_lighting"
 
     print("✓ FacialEmotionAnalyzer tests passed successfully.")
 
 
 def cv2_draw_synthetic_face(img):
     import cv2
-    # Draw head outline
-    cv2.circle(img, (200, 200), 80, (200, 200, 200), -1)
-    # Draw eyes
-    cv2.circle(img, (170, 180), 12, (0, 0, 0), -1)
-    cv2.circle(img, (230, 180), 12, (0, 0, 0), -1)
-    # Draw mouth
-    cv2.rectangle(img, (175, 230), (225, 240), (0, 0, 0), -1)
+    return cv2_draw_synthetic_face_at(img, 200, 200, 80)
+
+
+def cv2_draw_synthetic_face_at(img, cx, cy, r):
+    import cv2
+    cv2.circle(img, (cx, cy), r, (200, 200, 200), -1)
+    eye_offset = int(r * 0.35)
+    eye_r = max(4, int(r * 0.15))
+    cv2.circle(img, (cx - eye_offset, cy - int(r * 0.25)), eye_r, (0, 0, 0), -1)
+    cv2.circle(img, (cx + eye_offset, cy - int(r * 0.25)), eye_r, (0, 0, 0), -1)
+    cv2.rectangle(img, (cx - int(r * 0.3), cy + int(r * 0.3)), (cx + int(r * 0.3), cy + int(r * 0.45)), (0, 0, 0), -1)
     return img
 
 

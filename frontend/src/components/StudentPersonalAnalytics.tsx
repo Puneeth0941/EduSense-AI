@@ -128,7 +128,7 @@ export const StudentPersonalAnalytics: React.FC<StudentPersonalAnalyticsProps> =
       <div className="p-4 bg-amber-950/40 border border-amber-800/50 rounded-2xl flex items-start gap-3">
         <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
         <div className="text-xs text-amber-300/90 leading-relaxed">
-          <strong className="font-semibold text-amber-200">AI Transparency Note:</strong> Attentiveness is estimated from 3D head-pose geometry. Pretrained ONNX FERPlus facial-expression recognition is active. AI classifications provide supportive engagement indicators and should be evaluated alongside overall classroom participation.
+          <strong className="font-semibold text-amber-200">AI Transparency Note:</strong> Attentiveness is estimated from 3D head-pose geometry. Primary EmotiEffLib (EfficientNet ONNX) with FERPlus ONNX fallback provides supportive classroom indicators. Facial analysis reflects visible camera observations and does not prove a student's internal emotional state.
         </div>
       </div>
 
@@ -331,6 +331,43 @@ export const StudentPersonalAnalytics: React.FC<StudentPersonalAnalyticsProps> =
               <div>Questions Logged: <strong className="text-indigo-300">{engagementSummary.question_count}</strong></div>
             </div>
           </div>
+
+          {/* FACIAL OBSERVATION SUMMARY */}
+          {engagementSummary.facial_summary && engagementSummary.facial_summary.status === 'analyzed' && (
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-emerald-400" />
+                <span>Observed Facial Analysis — {engagementSummary.facial_summary.valid_samples} Valid Samples</span>
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Dominant Expression</span>
+                  <div className="text-lg font-extrabold text-white capitalize">
+                    {engagementSummary.facial_summary.dominant_expression === 'insufficient_data'
+                      ? 'Not enough data yet'
+                      : engagementSummary.facial_summary.dominant_expression}
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Observed across {engagementSummary.facial_summary.valid_windows} window(s)
+                  </span>
+                </div>
+                <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-2">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Observed Expression Distribution</span>
+                  <div className="grid grid-cols-5 gap-1.5 text-center text-[10px]">
+                    {['neutral', 'happy', 'sad', 'angry', 'fear'].map((em) => {
+                      const pct = Math.round((engagementSummary.facial_summary?.expression_distribution?.[em] || 0) * 100);
+                      return (
+                        <div key={em} className="p-1.5 bg-slate-900 rounded-lg border border-slate-800">
+                          <span className="text-slate-400 block capitalize">{em}</span>
+                          <span className="text-indigo-300 font-bold">{pct}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

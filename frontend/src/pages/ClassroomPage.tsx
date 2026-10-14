@@ -949,14 +949,29 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
     const handleDeviceChange = async () => {
       console.log('[LIVEKIT AUDIO] Device change detected (earbuds connected/disconnected).');
       try {
-        if (room && !room.canPlaybackAudio) {
-          await room.startAudio();
+        if (room) {
+          try {
+            await room.switchActiveDevice('audiooutput', 'default');
+          } catch (e: any) {
+            console.log('[LIVEKIT switchActiveDevice error]', e?.message);
+          }
+          if (!room.canPlaybackAudio) {
+            await room.startAudio();
+          }
         }
-        document.querySelectorAll('audio').forEach((audio) => {
+        const audioElements = document.querySelectorAll('audio');
+        for (const audio of Array.from(audioElements)) {
+          if ('setSinkId' in audio && typeof (audio as any).setSinkId === 'function') {
+            try {
+              await (audio as any).setSinkId('');
+            } catch (err: any) {
+              console.log('[AUDIO SINKID ERR]', err?.message);
+            }
+          }
           if (audio.srcObject && audio.paused) {
             audio.play().catch((err: any) => console.log('[AUDIO DEVICECHANGE PLAY ERR]', err?.message));
           }
-        });
+        }
       } catch (err: any) {
         console.log('[AUDIO DEVICECHANGE ERR]', err?.message);
       }
@@ -984,6 +999,7 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
   const handleTestAudioSound = () => {
     try {
       if (room) {
+        room.switchActiveDevice('audiooutput', 'default').catch(() => {});
         room.startAudio().catch(() => {});
       }
       startAudio().catch(() => {});
@@ -1006,9 +1022,12 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
       osc.start();
       osc.stop(audioCtx.currentTime + 0.5);
 
-      // Force play & unmute all DOM audio elements
+      // Force play & unmute all DOM audio elements and route to default output
       document.querySelectorAll('audio').forEach((el) => {
         el.muted = false;
+        if ('setSinkId' in el && typeof (el as any).setSinkId === 'function') {
+          (el as any).setSinkId('').catch(() => {});
+        }
         if (el.srcObject) {
           el.play().catch(() => {});
         }
@@ -1033,8 +1052,22 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
             onClick={async () => {
               console.log('[LIVEKIT MANUAL START AUDIO CLICKED]');
               try {
-                if (room) await room.startAudio();
+                if (room) {
+                  try {
+                    await room.switchActiveDevice('audiooutput', 'default');
+                  } catch {}
+                  await room.startAudio();
+                }
                 await startAudio();
+                const audioElements = document.querySelectorAll('audio');
+                for (const audio of Array.from(audioElements)) {
+                  if ('setSinkId' in audio && typeof (audio as any).setSinkId === 'function') {
+                    try { await (audio as any).setSinkId(''); } catch {}
+                  }
+                  if (audio.srcObject && audio.paused) {
+                    audio.play().catch(() => {});
+                  }
+                }
               } catch (err) {
                 console.error('startAudio error:', err);
               }
@@ -1382,7 +1415,9 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
                 </span>
                 <div className="flex items-baseline justify-between">
                   <span className="text-xl font-extrabold text-white uppercase">
-                    {facialWindowData?.dominant_expression || 'NEUTRAL'}
+                    {!facialWindowData || facialWindowData?.dominant_expression === 'insufficient_data'
+                      ? 'INSUFFICIENT DATA'
+                      : facialWindowData.dominant_expression}
                   </span>
                   <span className="text-xs text-slate-400">
                     {facialWindowData?.students_with_valid_expression || 0} / {facialWindowData?.students_analyzed || 0} students

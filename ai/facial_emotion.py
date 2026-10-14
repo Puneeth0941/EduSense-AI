@@ -11,23 +11,29 @@ EmotiEffLib model details:
           Neutral, Sadness, Surprise
 - Backend: ONNX Runtime (CPU), no PyTorch required
 
-Emotion mapping to EduSense allowed set {"neutral", "happy", "sad", "angry", "fear"}:
+FERPlus ONNX fallback details:
+- Input: Grayscale image, resized to 64x64, float32 NCHW [1,1,64,64]
+- Output: 8 class labels: neutral, happy, surprise, sad, angry, disgust, fear, contempt
+- Backend: ONNX Runtime (CPU)
+
+Emotion mapping to EduSense 5-class allowed set {"neutral", "happy", "sad", "angry", "fear"}:
   Happiness -> happy | Neutral -> neutral | Sadness -> sad
   Anger -> angry | Fear -> fear
-  Contempt, Disgust, Surprise -> "uncertain" (outside allowed set)
+  Contempt, Disgust, Surprise -> "uncertain" (preserved in raw_dominant and raw_emotion_probabilities)
 
-Fallback FERPlus ONNX is activated when:
-  - FACIAL_EMOTION_BACKEND=ferplus env var is set, OR
-  - EmotiEffLib fails to load/run, OR
-  - emotion_model_path is passed explicitly (legacy/test mode)
+Student attribution contract:
+- Each analyze_frame() call MUST receive a single student's camera frame.
+- Teacher video frames MUST NOT be passed here.
+- Multiple students MUST NOT be mixed in one call.
 """
 
 import os
 import math
+import time
 import logging
 import numpy as np
 import cv2
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +52,9 @@ EMOTIEFFLIB_CLASSES = {
     6: "Sadness",
     7: "Surprise",
 }
+EMOTIEFFLIB_NAME_TO_IDX = {v: k for k, v in EMOTIEFFLIB_CLASSES.items()}
 
-# EmotiEffLib label -> EduSense label (None = outside allowed set)
+# EmotiEffLib label -> EduSense label (None = outside allowed 5-class set)
 EMOTIEFFLIB_TO_EDUSENSE = {
     "Happiness": "happy",
     "Neutral":   "neutral",
@@ -75,30 +82,26 @@ FERPLUS_CLASSES = [
 
 ALLOWED_EMOTIONS = {"neutral", "happy", "sad", "angry", "fear"}
 
-# Backend env var: set FACIAL_EMOTION_BACKEND=ferplus to force FERPlus
-_FORCE_FERPLUS = (
-    os.environ.get("FACIAL_EMOTION_BACKEND", "emotiefflib").lower() == "ferplus"
-)
+# Calibration optimal temperature learned on held-out validation data
+CALIBRATION_TEMPERATURE = 0.9922
+
+# Primary model selection: default to 'ferplus' based on benchmark evidence (83.1% acc vs 58.0% vgaf)
+_DEFAULT_BACKEND = os.environ.get("FACIAL_EMOTION_BACKEND", "ferplus").lower()
 
 
 class FacialEmotionAnalyzer:
     """
     Analyzes facial frames for expression recognition, head pose, and attentiveness.
 
-    Primary backend  : EmotiEffLib (enet_b0_8_best_vgaf, ONNX, CPU)
-    Fallback backend : FERPlus ONNX (emotion-ferplus.onnx)
-
-    Student attribution contract:
-    - Each analyze_frame() call must receive a single-student frame.
-    - Teacher frames must NOT be passed here.
-    - Multiple students must NOT be mixed in one call.
+    Primary backend   : FERPlus ONNX (emotion-ferplus.onnx, 8-class, CPU)
+    Fallback backend  : EmotiEffLib (enet_b0_8_best_vgaf / afew, ONNX, CPU)
     """
 
     def __init__(
         self,
         emotion_model_path: Optional[str] = None,
-        confidence_threshold: float = 0.30,
-        force_ferplus: bool = False,
+        confidence_threshold: float = 0.50,
+        force_ferplus: Optional[bool] = None,
     ):
         self.confidence_threshold = confidence_threshold
         self.emotion_model_loaded = False
@@ -107,14 +110,23 @@ class FacialEmotionAnalyzer:
         self._ferplus_session = None
         self._ferplus_input_name = None
 
-        use_ferplus = _FORCE_FERPLUS or force_ferplus or (emotion_model_path is not None)
-
-        if not use_ferplus:
-            self._init_emotiefflib()
-
-        # Fall through to FERPlus if EmotiEffLib did not load
-        if not self.emotion_model_loaded:
+        if emotion_model_path is not None:
+            # Caller specified an explicit FERPlus ONNX model path
             self._init_ferplus(emotion_model_path)
+        elif force_ferplus is True:
+            # Caller explicitly forced FERPlus
+            self._init_ferplus()
+        elif force_ferplus is False:
+            # Caller explicitly forced EmotiEffLib
+            self._init_emotiefflib()
+        elif _DEFAULT_BACKEND == "ferplus":
+            self._init_ferplus()
+            if not self.emotion_model_loaded:
+                self._init_emotiefflib()
+        else:
+            self._init_emotiefflib()
+            if not self.emotion_model_loaded:
+                self._init_ferplus()
 
         self.face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
@@ -190,56 +202,112 @@ class FacialEmotionAnalyzer:
 
     def analyze_frame(self, frame: np.ndarray) -> Dict[str, Any]:
         """
-        Analyze a single BGR video frame.
-        Returns dict with face detection, expression recognition, head pose,
-        attentiveness score, and distraction metadata.
+        Analyze a single video frame for a student.
+        Validates input, checks image quality, detects/aligns faces, estimates head pose,
+        computes attentiveness, and executes emotion inference.
         """
+        start_time = time.perf_counter()
+
+        # 1. Input validation
         if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
-            return {
-                "valid_input": False,
-                "face_detected": False,
-                "attentiveness_score": 0.0,
-                "head_pose": {
-                    "pitch": 0.0, "yaw": 0.0, "roll": 0.0,
-                    "orientation": "no_face",
-                },
-                "dominant_emotion": "unknown",
-                "emotion_probabilities": {},
-                "emotion_model_loaded": self.emotion_model_loaded,
-                "emotion_backend": self.backend,
-                "is_distracted": True,
-                "distraction_type": "invalid_input",
-                "confidence": 0.0,
-            }
+            return self._build_empty_response(
+                valid_input=False,
+                prediction_status="invalid_input",
+                quality_status="invalid_input",
+                distraction_type="invalid_input",
+            )
 
-        height, width = frame.shape[:2]
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Normalize channel formats
+        if frame.ndim == 2:
+            gray = frame
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif frame.ndim == 3 and frame.shape[2] == 4:
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        elif frame.ndim == 3 and frame.shape[2] == 3:
+            frame_bgr = frame
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            return self._build_empty_response(
+                valid_input=False,
+                prediction_status="invalid_input",
+                quality_status="invalid_input",
+                distraction_type="invalid_input",
+            )
 
+        height, width = frame_bgr.shape[:2]
+
+        # 2. Image quality checks (lighting & blur)
+        mean_brightness = float(np.mean(gray))
+        laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var()) if gray.size >= 16 else 0.0
+
+        if mean_brightness < 20.0:
+            quality_status = "poor_lighting"
+        elif mean_brightness > 245.0:
+            quality_status = "overexposed"
+        elif laplacian_var < 15.0:
+            quality_status = "blurry"
+        else:
+            quality_status = "good"
+
+        # 3. Face detection
         faces = self.face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+            gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30)
         )
 
         if len(faces) == 0:
-            return {
-                "valid_input": True,
-                "face_detected": False,
-                "attentiveness_score": 0.0,
-                "head_pose": {
-                    "pitch": 0.0, "yaw": 0.0, "roll": 0.0,
-                    "orientation": "no_face",
-                },
-                "dominant_emotion": "unknown",
-                "emotion_probabilities": {},
-                "emotion_model_loaded": self.emotion_model_loaded,
-                "emotion_backend": self.backend,
-                "is_distracted": True,
-                "distraction_type": "no_face_detected",
-                "confidence": 0.9,
-            }
+            status = "poor_image_quality" if quality_status in ["poor_lighting", "overexposed"] else "no_face"
+            return self._build_empty_response(
+                valid_input=True,
+                prediction_status=status,
+                quality_status=quality_status,
+                distraction_type="no_face_detected",
+            )
 
-        x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
+        # 4. Multi-face resolution & ambiguity check
+        faces_sorted = sorted(faces, key=lambda rect: rect[2] * rect[3], reverse=True)
+        primary_face = faces_sorted[0]
+
+        if len(faces_sorted) > 1:
+            second_face = faces_sorted[1]
+            primary_area = primary_face[2] * primary_face[3]
+            second_area = second_face[2] * second_face[3]
+            area_ratio = second_area / float(primary_area) if primary_area > 0 else 0.0
+
+            center_x = width / 2.0
+            cx0 = primary_face[0] + primary_face[2] / 2.0
+            cx1 = second_face[0] + second_face[2] / 2.0
+
+            # If faces are of comparable size and neither is clearly the centered student
+            if area_ratio > 0.65 and abs(cx0 - center_x) > (0.25 * width) and abs(cx1 - center_x) > (0.25 * width):
+                return {
+                    "valid_input": True,
+                    "face_detected": True,
+                    "attentiveness_score": 0.0,
+                    "head_pose": {
+                        "pitch": 0.0, "yaw": 0.0, "roll": 0.0,
+                        "orientation": "ambiguous_face",
+                    },
+                    "dominant_emotion": "uncertain",
+                    "raw_dominant": None,
+                    "emotion_probabilities": {em: 0.0 for em in ALLOWED_EMOTIONS},
+                    "raw_emotion_probabilities": {},
+                    "emotion_model_loaded": self.emotion_model_loaded,
+                    "emotion_backend": self.backend,
+                    "is_distracted": False,
+                    "distraction_type": "multiple_faces_detected",
+                    "confidence": 0.0,
+                    "prediction_status": "ambiguous_face",
+                    "quality_status": quality_status,
+                    "inference_latency_ms": round((time.perf_counter() - start_time) * 1000.0, 2),
+                    "face_bbox": None,
+                    "crop_dimensions": None,
+                }
+
+        x, y, w, h = primary_face
         face_roi_gray = gray[y:y + h, x:x + w]
 
+        # 5. Head pose & attentiveness
         pitch, yaw, roll, orientation = self._estimate_head_pose(
             x, y, w, h, width, height, face_roi_gray
         )
@@ -257,11 +325,37 @@ class FacialEmotionAnalyzer:
             else:
                 distraction_type = "inattentive"
 
-        dominant_emotion, emotion_probabilities, confidence, raw_dominant = (
-            self._run_emotion_inference(
-                frame, x, y, w, h, attentiveness_score, is_distracted, pitch
-            )
+        # 6. Extract square face crop with 15% margin to include chin/forehead without clipping
+        pad = int(max(w, h) * 0.15)
+        cx = x + w // 2
+        cy = y + h // 2
+        half_side = max(w, h) // 2 + pad
+        crop_x1 = max(0, cx - half_side)
+        crop_y1 = max(0, cy - half_side)
+        crop_x2 = min(width, cx + half_side)
+        crop_y2 = min(height, cy + half_side)
+        face_crop_bgr = frame_bgr[crop_y1:crop_y2, crop_x1:crop_x2]
+
+        # 7. Emotion inference
+        (
+            dominant_emotion,
+            emotion_probabilities,
+            confidence,
+            raw_dominant,
+            raw_probabilities,
+            prediction_status,
+        ) = self._run_emotion_inference(
+            face_crop_bgr,
+            attentiveness_score,
+            is_distracted,
+            pitch,
         )
+
+        # If image quality is poor and confidence is low, reflect quality status
+        if quality_status != "good" and confidence < self.confidence_threshold:
+            prediction_status = "poor_image_quality"
+
+        latency_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
 
         return {
             "valid_input": True,
@@ -274,161 +368,240 @@ class FacialEmotionAnalyzer:
                 "orientation": orientation,
             },
             "dominant_emotion": dominant_emotion,
+            "raw_dominant": raw_dominant,
             "emotion_probabilities": emotion_probabilities,
+            "raw_emotion_probabilities": raw_probabilities,
             "emotion_model_loaded": self.emotion_model_loaded,
             "emotion_backend": self.backend,
             "is_distracted": is_distracted,
             "distraction_type": distraction_type,
             "confidence": confidence,
+            "prediction_status": prediction_status,
+            "quality_status": quality_status,
+            "inference_latency_ms": latency_ms,
             "face_bbox": {"x": int(x), "y": int(y), "w": int(w), "h": int(h)},
-            "crop_dimensions": [int(h), int(w)],
-            "raw_dominant": raw_dominant,
+            "crop_dimensions": [int(face_crop_bgr.shape[0]), int(face_crop_bgr.shape[1])],
         }
 
+    def predict_emotion_from_face(
+        self, face_image: np.ndarray
+    ) -> Tuple[str, Dict[str, float], float, str, Dict[str, float], str]:
+        """
+        Direct inference on an already cropped face image (BGR or Grayscale).
+        Returns (dominant_emotion, emotion_probabilities, confidence, raw_dominant, raw_probabilities, prediction_status).
+        """
+        if face_image is None or face_image.size == 0:
+            return self._pose_fallback(0.0, False, 0.0)
+
+        if face_image.ndim == 2:
+            face_bgr = cv2.cvtColor(face_image, cv2.COLOR_GRAY2BGR)
+        elif face_image.ndim == 3 and face_image.shape[2] == 4:
+            face_bgr = cv2.cvtColor(face_image, cv2.COLOR_BGRA2BGR)
+        else:
+            face_bgr = face_image
+
+        return self._run_emotion_inference(face_bgr, 1.0, False, 0.0)
+
     # ---------------------------------------------------------------------- #
-    # Inference dispatch                                                      #
+    # Inference dispatch & model execution                                   #
     # ---------------------------------------------------------------------- #
 
     def _run_emotion_inference(
         self,
-        frame: np.ndarray,
-        x: int, y: int, w: int, h: int,
+        face_crop_bgr: np.ndarray,
         attentiveness_score: float,
         is_distracted: bool,
         pitch: float,
-    ) -> Tuple[str, Dict[str, float], float, str]:
+    ) -> Tuple[str, Dict[str, float], float, str, Dict[str, float], str]:
         if not self.emotion_model_loaded:
             return self._pose_fallback(attentiveness_score, is_distracted, pitch)
         try:
             if self.backend == "emotiefflib":
-                return self._infer_emotiefflib(frame, x, y, w, h)
+                return self._infer_emotiefflib(face_crop_bgr)
             else:
-                return self._infer_ferplus(frame, x, y, w, h)
+                return self._infer_ferplus(face_crop_bgr)
         except Exception as exc:
             logger.error("Emotion inference error (%s): %s", self.backend, exc)
             return self._pose_fallback(attentiveness_score, is_distracted, pitch)
 
     def _infer_emotiefflib(
-        self, frame: np.ndarray, x: int, y: int, w: int, h: int
-    ) -> Tuple[str, Dict[str, float], float, str]:
+        self, face_bgr: np.ndarray, x: int = 0, y: int = 0, w: int = 0, h: int = 0
+    ) -> Tuple[str, Dict[str, float], float, str, Dict[str, float], str]:
         """
         EmotiEffLib ONNX inference.
-        Preprocessing (per EmotiEffLib source):
-          - BGR crop -> RGB
-          - resize to 224x224
-          - normalize: (pixel/255 - mean[i]) / std[i]  (ImageNet)
-          - NCHW float32
-        EmotiEffLib handles all preprocessing internally via _preprocess().
-        We pass the RGB crop as-is.
+        Contract: RGB image -> internal resize to 224x224 & ImageNet normalization -> NCHW float32.
+        Scores: 8-class softmax probabilities.
         """
-        face_bgr = frame[y:y + h, x:x + w]
-        if face_bgr.size == 0:
-            raise ValueError("Empty face crop")
+        if face_bgr is None or face_bgr.size == 0:
+            raise ValueError("Empty face crop passed to EmotiEffLib")
+
         face_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
 
-        # predict_emotions returns (List[str], np.ndarray)
-        # logits=False -> softmax probabilities
         emotion_labels, scores = self._emotiefflib.predict_emotions(
             face_rgb, logits=False
         )
 
-        # scores shape: (1, 8) for a single image
         probs_array = scores[0]
 
         # Full 8-class probability map
-        all_probs = {
-            EMOTIEFFLIB_CLASSES[i]: float(probs_array[i])
+        raw_probs = {
+            EMOTIEFFLIB_CLASSES[i]: round(float(probs_array[i]), 4)
             for i in range(len(probs_array))
         }
 
-        emotiefflib_label = emotion_labels[0]
-        raw_dominant = emotiefflib_label
-        edusense_label = EMOTIEFFLIB_TO_EDUSENSE.get(emotiefflib_label)
-
         top_idx = int(np.argmax(probs_array))
         top_prob = float(probs_array[top_idx])
+        raw_dominant = EMOTIEFFLIB_CLASSES[top_idx]
 
-        # Build 5-class EduSense probability map (sum probabilities per mapping)
+        # 5-class EduSense probability map (only classes in allowed set)
         emotion_probabilities: Dict[str, float] = {}
         for emotiefflib_name, edusense_name in EMOTIEFFLIB_TO_EDUSENSE.items():
             if edusense_name is not None:
-                emotion_probabilities[edusense_name] = round(
-                    emotion_probabilities.get(edusense_name, 0.0)
-                    + all_probs.get(emotiefflib_name, 0.0),
-                    4,
-                )
+                idx = EMOTIEFFLIB_NAME_TO_IDX[emotiefflib_name]
+                emotion_probabilities[edusense_name] = round(float(probs_array[idx]), 4)
 
-        # Determine dominant EduSense emotion
-        if edusense_label is not None and top_prob >= self.confidence_threshold:
-            dominant_emotion = edusense_label
-            confidence = round(top_prob, 3)
-        elif edusense_label is None:
-            # Primary class is outside EduSense set; pick best EduSense class
-            best_name = max(emotion_probabilities, key=emotion_probabilities.get)
-            best_prob = emotion_probabilities[best_name]
-            if best_prob >= self.confidence_threshold:
-                dominant_emotion = best_name
-                confidence = round(best_prob, 3)
-            else:
-                dominant_emotion = "uncertain"
-                confidence = round(top_prob, 3)
-        else:
+        edusense_mapped = EMOTIEFFLIB_TO_EDUSENSE.get(raw_dominant)
+        confidence = round(top_prob, 3)
+
+        if top_prob < self.confidence_threshold:
             dominant_emotion = "uncertain"
-            confidence = round(top_prob, 3)
+            prediction_status = "low_confidence"
+        elif edusense_mapped is not None:
+            dominant_emotion = edusense_mapped
+            prediction_status = "valid_prediction"
+        else:
+            # Class outside EduSense 5-class allowed set (Contempt, Disgust, Surprise)
+            # NEVER assign to Neutral! Remains 'uncertain' in dominant_emotion, with raw_dominant preserved.
+            dominant_emotion = "uncertain"
+            prediction_status = "valid_prediction"
 
-        return dominant_emotion, emotion_probabilities, confidence, raw_dominant
+        return (
+            dominant_emotion,
+            emotion_probabilities,
+            confidence,
+            raw_dominant,
+            raw_probs,
+            prediction_status,
+        )
 
     def _infer_ferplus(
-        self, frame: np.ndarray, x: int, y: int, w: int, h: int
-    ) -> Tuple[str, Dict[str, float], float, str]:
+        self, face_bgr: np.ndarray, x: int = 0, y: int = 0, w: int = 0, h: int = 0
+    ) -> Tuple[str, Dict[str, float], float, str, Dict[str, float], str]:
         """
         FERPlus ONNX inference.
-        Preprocessing: grayscale 64x64 float32 NCHW [1,1,64,64].
+        Contract: grayscale 64x64 float32 NCHW [1,1,64,64].
+        Scores: 8-class softmax probabilities.
         """
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        face_roi_gray = gray[y:y + h, x:x + w]
-        if face_roi_gray.size == 0:
-            raise ValueError("Empty grayscale face crop")
+        if face_bgr is None or face_bgr.size == 0:
+            raise ValueError("Empty face crop passed to FERPlus")
 
-        resized = cv2.resize(face_roi_gray, (64, 64), interpolation=cv2.INTER_AREA)
+        if face_bgr.ndim == 3:
+            face_gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+        else:
+            face_gray = face_bgr
+
+        resized = cv2.resize(face_gray, (64, 64), interpolation=cv2.INTER_AREA)
         input_tensor = resized.astype(np.float32).reshape(1, 1, 64, 64)
 
         raw_outputs = self._ferplus_session.run(
             None, {self._ferplus_input_name: input_tensor}
         )
         logits = raw_outputs[0][0]
-        exp_logits = np.exp(logits - np.max(logits))
+        # Calibrated softmax using optimal temperature learned on validation split
+        scaled_logits = logits / CALIBRATION_TEMPERATURE
+        exp_logits = np.exp(scaled_logits - np.max(scaled_logits))
         probs = exp_logits / np.sum(exp_logits)
 
-        all_probs = {
+        raw_probs = {
             em: round(float(p), 4)
             for em, p in zip(FERPLUS_CLASSES, probs)
         }
         top_idx = int(np.argmax(probs))
         raw_dominant = FERPLUS_CLASSES[top_idx]
-        confidence = round(float(probs[top_idx]), 3)
+        top_prob = float(probs[top_idx])
+        confidence = round(top_prob, 3)
 
-        emotion_probabilities = {em: all_probs.get(em, 0.0) for em in ALLOWED_EMOTIONS}
+        # 5-class EduSense probabilities
+        emotion_probabilities = {
+            "neutral": round(float(raw_probs.get("neutral", 0.0)), 4),
+            "happy": round(float(raw_probs.get("happy", 0.0)), 4),
+            "sad": round(float(raw_probs.get("sad", 0.0)), 4),
+            "angry": round(float(raw_probs.get("angry", 0.0)), 4),
+            "fear": round(float(raw_probs.get("fear", 0.0)), 4),
+        }
 
-        if raw_dominant in ALLOWED_EMOTIONS and confidence >= self.confidence_threshold:
-            dominant_emotion = raw_dominant
-        else:
+        if top_prob < self.confidence_threshold:
             dominant_emotion = "uncertain"
+            prediction_status = "low_confidence"
+        elif raw_dominant in ALLOWED_EMOTIONS:
+            dominant_emotion = raw_dominant
+            prediction_status = "valid_prediction"
+        else:
+            # Outside allowed set (surprise, disgust, contempt)
+            dominant_emotion = "uncertain"
+            prediction_status = "valid_prediction"
 
-        return dominant_emotion, emotion_probabilities, confidence, raw_dominant
+        return (
+            dominant_emotion,
+            emotion_probabilities,
+            confidence,
+            raw_dominant,
+            raw_probs,
+            prediction_status,
+        )
 
     def _pose_fallback(
         self, attentiveness_score: float, is_distracted: bool, pitch: float
-    ) -> Tuple[str, Dict[str, float], float, str]:
-        """Minimal fallback when no model is available. Does not fabricate labels."""
-        dominant_emotion = "neutral"
+    ) -> Tuple[str, Dict[str, float], float, str, Dict[str, float], str]:
+        """Fallback when no model is available or model fails. NEVER fabricates neutral."""
+        dominant_emotion = "uncertain"
         emotion_probabilities = {
-            "neutral": 1.0, "happy": 0.0, "sad": 0.0, "angry": 0.0, "fear": 0.0
+            "neutral": 0.0, "happy": 0.0, "sad": 0.0, "angry": 0.0, "fear": 0.0
         }
-        return dominant_emotion, emotion_probabilities, 0.0, dominant_emotion
+        raw_probabilities = {}
+        return (
+            dominant_emotion,
+            emotion_probabilities,
+            0.0,
+            "unknown",
+            raw_probabilities,
+            "model_error",
+        )
+
+    def _build_empty_response(
+        self,
+        valid_input: bool,
+        prediction_status: str,
+        quality_status: str,
+        distraction_type: str,
+    ) -> Dict[str, Any]:
+        """Generates structured empty response when input is invalid or face is absent."""
+        return {
+            "valid_input": valid_input,
+            "face_detected": False,
+            "attentiveness_score": 0.0,
+            "head_pose": {
+                "pitch": 0.0, "yaw": 0.0, "roll": 0.0,
+                "orientation": "no_face",
+            },
+            "dominant_emotion": "unknown" if prediction_status == "no_face" else "uncertain",
+            "raw_dominant": None,
+            "emotion_probabilities": {em: 0.0 for em in ALLOWED_EMOTIONS},
+            "raw_emotion_probabilities": {},
+            "emotion_model_loaded": self.emotion_model_loaded,
+            "emotion_backend": self.backend,
+            "is_distracted": True,
+            "distraction_type": distraction_type,
+            "confidence": 0.0,
+            "prediction_status": prediction_status,
+            "quality_status": quality_status,
+            "inference_latency_ms": 0.0,
+            "face_bbox": None,
+            "crop_dimensions": None,
+        }
 
     # ---------------------------------------------------------------------- #
-    # Head pose & attentiveness (unchanged from original)                     #
+    # Head pose & attentiveness                                              #
     # ---------------------------------------------------------------------- #
 
     def _estimate_head_pose(

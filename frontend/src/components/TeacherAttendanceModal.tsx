@@ -51,6 +51,9 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setSummary(null);
+      setError(null);
+      setSearchTerm('');
       fetchAttendance();
       const interval = setInterval(fetchAttendance, 15000); // Periodic 15s refresh
       return () => clearInterval(interval);
@@ -78,8 +81,8 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
 
   const filteredRecords = summary?.records.filter(
     (r) =>
-      r.student_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.student_id_number.toLowerCase().includes(searchTerm.toLowerCase())
+      (r.student_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.student_id_number || '').toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
   return (
@@ -244,14 +247,14 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
                     ABSENT: 'bg-red-950 text-red-300 border-red-800/50',
                   };
 
-                  const durationMins = Math.floor(r.presence_duration_seconds / 60);
+                  const durationMins = Math.floor((r.presence_duration_seconds || 0) / 60);
 
                   return (
                     <tr key={r.id} className="hover:bg-slate-800/30 transition-all">
                       <td className="py-3 px-2">
                         <div>
-                          <p className="font-bold text-white">{r.student_name}</p>
-                          <p className="text-[10px] text-slate-400 font-mono">ID: {r.student_id_number}</p>
+                          <p className="font-bold text-white">{r.student_name || 'Student'}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">ID: {r.student_id_number || 'N/A'}</p>
                         </div>
                       </td>
 
@@ -326,7 +329,7 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
             </div>
 
             <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl space-y-1 text-xs">
-              <p className="text-slate-400">Student: <strong className="text-white">{editingRecord.student_name}</strong> ({editingRecord.student_id_number})</p>
+              <p className="text-slate-400">Student: <strong className="text-white">{editingRecord.student_name || 'Student'}</strong> ({editingRecord.student_id_number || 'N/A'})</p>
               <p className="text-slate-400">Current Status: <strong className="text-indigo-400">{editingRecord.status}</strong></p>
             </div>
 

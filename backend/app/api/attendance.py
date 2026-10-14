@@ -349,6 +349,9 @@ def get_session_attendance(
             s_name = sp_fallback.user.full_name
             s_id_num = sp_fallback.student_id_number
 
+        s_name = s_name or "Student"
+        s_id_num = s_id_num or "N/A"
+
         if rec:
             st = get_status_str(rec.status)
             first_v = rec.first_verified_at.isoformat() if rec.first_verified_at else None

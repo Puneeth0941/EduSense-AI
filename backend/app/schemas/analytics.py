@@ -30,13 +30,18 @@ class FacialAnalysisResult(BaseModel):
     face_detected: bool = False
     attentiveness_score: float = Field(default=0.0, ge=0.0, le=1.0)
     head_pose: HeadPoseInfo = Field(default_factory=HeadPoseInfo)
-    dominant_emotion: str = "neutral"
+    dominant_emotion: str = "uncertain"
+    raw_dominant: Optional[str] = None
     emotion_probabilities: Dict[str, float] = Field(default_factory=dict)
+    raw_emotion_probabilities: Dict[str, float] = Field(default_factory=dict)
     emotion_model_loaded: bool = False
     emotion_backend: Optional[str] = None  # "emotiefflib", "ferplus", or "none"
     is_distracted: bool = False
     distraction_type: Optional[str] = None
     confidence: float = 0.0
+    prediction_status: str = "valid_prediction"  # valid_prediction, low_confidence, no_face, poor_image_quality, ambiguous_face, model_error, insufficient_data
+    quality_status: str = "good"  # good, poor_lighting, blurry, invalid_input
+    inference_latency_ms: Optional[float] = None
 
 
 class TextSentimentInput(BaseModel):
@@ -148,7 +153,7 @@ class SessionAnalyticsOverview(BaseModel):
 class FacialWindowAnalytics(BaseModel):
     window_start: datetime
     window_end: datetime
-    dominant_expression: str = "neutral"
+    dominant_expression: str = "insufficient_data"
     expression_distribution: Dict[str, float] = Field(default_factory=dict)
     students_analyzed: int = 0
     students_with_valid_expression: int = 0
@@ -159,7 +164,7 @@ class StudentFacialWindowAnalytics(BaseModel):
     window_start: datetime
     window_end: datetime
     student_id: UUID
-    dominant_expression: str = "neutral"
+    dominant_expression: str = "insufficient_data"
     confidence: float = 0.0
     sample_count: int = 0
     valid_sample_count: int = 0
@@ -168,7 +173,7 @@ class StudentFacialWindowAnalytics(BaseModel):
 
 class SessionFacialSummary(BaseModel):
     session_id: UUID
-    dominant_expression: str = "neutral"
+    dominant_expression: str = "insufficient_data"
     expression_distribution: Dict[str, float] = Field(default_factory=dict)
     total_windows: int = 0
     valid_windows: int = 0

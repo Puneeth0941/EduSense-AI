@@ -219,6 +219,10 @@ def analyze_classroom_frame(
         attentiveness_score=analysis_res.attentiveness_score,
         head_pose=head_pose_str,
         emotion_probabilities=analysis_res.emotion_probabilities,
+        emotion_backend=analysis_res.emotion_backend,
+        raw_dominant=analysis_res.raw_dominant,
+        confidence=analysis_res.confidence,
+        prediction_status=analysis_res.prediction_status,
     )
     db.add(fa_record)
 
@@ -716,6 +720,10 @@ def get_session_facial_summary(
 
     session_start = session.actual_start_time or session.created_at
     session_end = session.actual_end_time or datetime.now(timezone.utc)
+    if session_start.tzinfo is None:
+        session_start = session_start.replace(tzinfo=timezone.utc)
+    if session_end.tzinfo is None:
+        session_end = session_end.replace(tzinfo=timezone.utc)
 
     total_seconds = max(300.0, (session_end - session_start).total_seconds())
     num_windows = int(math.ceil(total_seconds / 300.0))

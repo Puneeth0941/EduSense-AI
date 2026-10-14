@@ -123,12 +123,36 @@ class AnalyticsService:
         If all samples are invalid/uncertain, returns dominant_expression = 'insufficient_data'.
         """
         allowed_emotions = ["neutral", "happy", "sad", "angry", "fear"]
-        valid_samples = []
-
+        
+        # Deduplicate samples: filter out duplicate retries (identical observation within 2s)
+        deduped_samples = []
+        seen_entries = []
         for s in samples:
+            t = getattr(s, "sampled_at", None) if not isinstance(s, dict) else s.get("sampled_at")
+            dom = getattr(s, "dominant_emotion", None) if not isinstance(s, dict) else s.get("dominant_emotion")
+            if t is not None:
+                is_duplicate = False
+                for prev_t, prev_dom in seen_entries:
+                    try:
+                        if abs((t - prev_t).total_seconds()) < 2.0 and dom == prev_dom:
+                            is_duplicate = True
+                            break
+                    except Exception:
+                        pass
+                if is_duplicate:
+                    continue
+                seen_entries.append((t, dom))
+            deduped_samples.append(s)
+
+        valid_samples = []
+        for s in deduped_samples:
             dom = getattr(s, "dominant_emotion", None) if not isinstance(s, dict) else s.get("dominant_emotion")
             probs = getattr(s, "emotion_probabilities", None) if not isinstance(s, dict) else s.get("emotion_probabilities")
+            status = getattr(s, "prediction_status", None) if not isinstance(s, dict) else s.get("prediction_status")
 
+            # Check rejection and uncertainty states
+            if status in ["poor_image_quality", "no_face", "ambiguous_face", "model_error", "low_confidence", "invalid_input"]:
+                continue
             if not dom or dom in ["unknown", "invalid_input", "no_face_detected", "uncertain"]:
                 continue
             if dom not in allowed_emotions:
@@ -140,7 +164,7 @@ class AnalyticsService:
             return {
                 "dominant_expression": "insufficient_data",
                 "confidence": 0.0,
-                "sample_count": len(samples),
+                "sample_count": len(deduped_samples),
                 "valid_sample_count": 0,
                 "expression_probabilities": {em: 0.0 for em in allowed_emotions},
             }
@@ -164,7 +188,7 @@ class AnalyticsService:
         return {
             "dominant_expression": top_emotion,
             "confidence": top_prob,
-            "sample_count": len(samples),
+            "sample_count": len(deduped_samples),
             "valid_sample_count": n_valid,
             "expression_probabilities": avg_probs,
         }
@@ -267,19 +291,43 @@ class AnalyticsService:
                 status="insufficient_data",
             )
 
+        # Deduplicate samples by timestamp
+        # Deduplicate samples: filter out duplicate retries (identical observation within 2s)
+        deduped_samples = []
+        seen_entries = []
+        for s in samples:
+            t = getattr(s, "sampled_at", None) if not isinstance(s, dict) else s.get("sampled_at")
+            dom = getattr(s, "dominant_emotion", None) if not isinstance(s, dict) else s.get("dominant_emotion")
+            if t is not None:
+                is_duplicate = False
+                for prev_t, prev_dom in seen_entries:
+                    try:
+                        if abs((t - prev_t).total_seconds()) < 2.0 and dom == prev_dom:
+                            is_duplicate = True
+                            break
+                    except Exception:
+                        pass
+                if is_duplicate:
+                    continue
+                seen_entries.append((t, dom))
+            deduped_samples.append(s)
+
         valid_samples = []
         valid_windows = set()
         attentiveness_scores = []
         head_poses = []
 
-        for s in samples:
+        for s in deduped_samples:
             dom = getattr(s, "dominant_emotion", None) if not isinstance(s, dict) else s.get("dominant_emotion")
             probs = getattr(s, "emotion_probabilities", None) if not isinstance(s, dict) else s.get("emotion_probabilities")
             att = getattr(s, "attentiveness_score", None) if not isinstance(s, dict) else s.get("attentiveness_score")
             pose = getattr(s, "head_pose", None) if not isinstance(s, dict) else s.get("head_pose")
             sampled_at = getattr(s, "sampled_at", None) if not isinstance(s, dict) else s.get("sampled_at")
+            status = getattr(s, "prediction_status", None) if not isinstance(s, dict) else s.get("prediction_status")
 
-            # Check validity
+            # Check rejection states
+            if status in ["poor_image_quality", "no_face", "ambiguous_face", "model_error", "low_confidence", "invalid_input"]:
+                continue
             if not dom or dom in ["unknown", "invalid_input", "no_face_detected", "uncertain"]:
                 continue
             if dom not in allowed_emotions:
@@ -315,7 +363,7 @@ class AnalyticsService:
                 student_id=student_id,
                 dominant_expression="insufficient_data",
                 expression_distribution={em: 0.0 for em in allowed_emotions},
-                total_samples=len(samples),
+                total_samples=len(deduped_samples),
                 valid_samples=0,
                 valid_windows=0,
                 attentiveness_score=None,
@@ -350,7 +398,7 @@ class AnalyticsService:
             student_id=student_id,
             dominant_expression=top_emotion,
             expression_distribution=avg_probs,
-            total_samples=len(samples),
+            total_samples=len(deduped_samples),
             valid_samples=n_valid,
             valid_windows=max(1, len(valid_windows)),
             attentiveness_score=avg_att,

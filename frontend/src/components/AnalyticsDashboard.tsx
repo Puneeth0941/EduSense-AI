@@ -717,7 +717,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                         <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
                           <span className="text-slate-400 block text-[10px]">Dominant Observed Expression</span>
                           <span className="text-white font-bold capitalize text-sm">
-                            {selectedStudent.facial_summary.dominant_expression}
+                            {selectedStudent.facial_summary.dominant_expression === 'insufficient_data'
+                              ? 'Not enough data yet'
+                              : selectedStudent.facial_summary.dominant_expression}
                           </span>
                         </div>
                         <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">

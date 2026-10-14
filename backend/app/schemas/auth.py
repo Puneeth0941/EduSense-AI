@@ -1,6 +1,6 @@
 import uuid
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from app.models.enums import UserRole
 
 
@@ -33,8 +33,7 @@ class TeacherProfileResponseSchema(BaseModel):
     department: Optional[str] = None
     designation: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StudentProfileResponseSchema(BaseModel):
@@ -43,8 +42,7 @@ class StudentProfileResponseSchema(BaseModel):
     department: Optional[str] = None
     enrollment_year: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserResponseSchema(BaseModel):
@@ -56,8 +54,7 @@ class UserResponseSchema(BaseModel):
     teacher_profile: Optional[TeacherProfileResponseSchema] = None
     student_profile: Optional[StudentProfileResponseSchema] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TokenResponseSchema(BaseModel):
