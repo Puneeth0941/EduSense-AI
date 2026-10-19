@@ -194,11 +194,15 @@ export interface FacialAnalysisResult {
 export interface SentimentAnalysisResult {
   valid_input: boolean;
   text: string;
-  sentiment_score: number;
+  sentiment_score?: number | null;
   sentiment_label: string;
   is_question: boolean;
   is_confusion: boolean;
-  confidence: number;
+  confidence?: number | null;
+  language?: string | null;
+  language_supported?: boolean;
+  status?: string | null;
+  note?: string | null;
 }
 
 export interface RecentTranscriptSnippet {
@@ -364,3 +368,5 @@ export interface LiveTranscriptMessage {
   quality_status?: string | null;
   is_low_confidence?: boolean;
 }
+
+

@@ -35,6 +35,7 @@ class TranscriptionResponse(BaseModel):
     language: Optional[str] = Field(None, description="Detected or configured language code ('en', 'kn', 'hi')")
     language_probability: Optional[float] = Field(None, description="Confidence of language detection")
     duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
+    duration: Optional[float] = Field(None, description="Alias for duration_seconds for frontend compatibility")
     segments: List[TranscriptSegment] = Field(default_factory=list, description="Timestamped segments")
     sentiment: Optional[SentimentAnalysisResult] = Field(None, description="Sentiment analysis of transcript")
     session_id: Optional[UUID] = Field(None, description="Associated class session ID")
@@ -43,8 +44,16 @@ class TranscriptionResponse(BaseModel):
     analysis_id: Optional[UUID] = Field(None, description="Persisted SpeechAnalysis record ID")
     sentiment_label: Optional[str] = Field(None, description="Convenience sentiment label")
     sentiment_score: Optional[float] = Field(None, description="Convenience sentiment score")
+    is_question: Optional[bool] = Field(None, description="Question intent flag")
+    is_confusion: Optional[bool] = Field(None, description="Confusion intent flag")
     quality_status: Optional[str] = Field("reliable", description="Speech recognition quality status ('reliable', 'low_confidence', 'silence')")
     is_low_confidence: bool = Field(False, description="Flag indicating recognition uncertainty")
+
+
+class TextSentimentRequest(BaseModel):
+    """Payload to analyze or re-analyze sentiment and intent directly on transcript text."""
+    text: str = Field(..., description="Transcript text to analyze")
+    language: Optional[str] = Field("auto", description="Language code ('auto', 'en', 'kn', 'hi')")
 
 
 class LanguageOption(BaseModel):

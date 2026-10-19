@@ -16,6 +16,7 @@ import type {
   TranscriptionResponse,
   LanguageOption,
   SessionTranscriptItem,
+  SentimentAnalysisResult,
 } from '../types';
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -381,6 +382,18 @@ export const transcriptionApi = {
       headers: getAuthHeaders(),
     });
     return handleResponse<SessionTranscriptItem[]>(res);
+  },
+
+  analyzeTextSentiment: async (data: {
+    text: string;
+    language?: string;
+  }): Promise<SentimentAnalysisResult> => {
+    const res = await fetch(`${API_BASE_URL}/transcription/analyze-text`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<SentimentAnalysisResult>(res);
   },
 };
 

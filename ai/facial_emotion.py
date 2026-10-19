@@ -87,6 +87,53 @@ CALIBRATION_TEMPERATURE = 0.9922
 
 # Primary model selection: default to 'ferplus' based on benchmark evidence (83.1% acc vs 58.0% vgaf)
 _DEFAULT_BACKEND = os.environ.get("FACIAL_EMOTION_BACKEND", "ferplus").lower()
+_DEFAULT_THRESHOLD = float(os.environ.get("FACIAL_EMOTION_THRESHOLD", "0.35"))
+
+
+class EmotionTemporalSmoother:
+    """
+    Lightweight temporal smoother for consecutive video frames of facial expression.
+    Maintains a rolling window (default size 5) of probability distributions to smooth
+    out high-frequency frame flicker, while dynamically adapting to clear emotion shifts.
+    Resets history when face is lost or tracking changes.
+    """
+
+    def __init__(self, window_size: int = 5, decay: float = 0.85):
+        self.window_size = window_size
+        self.decay = decay
+        self.history: List[Dict[str, float]] = []
+
+    def update(
+        self,
+        raw_probs: Dict[str, float],
+        face_detected: bool,
+    ) -> Tuple[str, Dict[str, float], float]:
+        if not face_detected or not raw_probs:
+            self.history.clear()
+            return "uncertain", {em: 0.0 for em in ALLOWED_EMOTIONS}, 0.0
+
+        self.history.append(raw_probs)
+        if len(self.history) > self.window_size:
+            self.history.pop(0)
+
+        # Exponentially weighted moving average: recent frames receive higher weights
+        weights = [self.decay ** (len(self.history) - 1 - i) for i in range(len(self.history))]
+        total_w = sum(weights)
+        smoothed: Dict[str, float] = {k: 0.0 for k in raw_probs}
+
+        for w, item in zip(weights, self.history):
+            for k, v in item.items():
+                smoothed[k] = smoothed.get(k, 0.0) + (float(v) * w)
+
+        for k in smoothed:
+            smoothed[k] = round(smoothed[k] / total_w, 4)
+
+        top_k = max(smoothed, key=lambda k: smoothed[k])
+        conf = smoothed[top_k]
+        return top_k, smoothed, conf
+
+    def reset(self) -> None:
+        self.history.clear()
 
 
 class FacialEmotionAnalyzer:
@@ -100,7 +147,7 @@ class FacialEmotionAnalyzer:
     def __init__(
         self,
         emotion_model_path: Optional[str] = None,
-        confidence_threshold: float = 0.50,
+        confidence_threshold: float = _DEFAULT_THRESHOLD,
         force_ferplus: Optional[bool] = None,
     ):
         self.confidence_threshold = confidence_threshold
@@ -109,6 +156,7 @@ class FacialEmotionAnalyzer:
         self._emotiefflib = None
         self._ferplus_session = None
         self._ferplus_input_name = None
+        self.smoother = EmotionTemporalSmoother(window_size=5, decay=0.85)
 
         if emotion_model_path is not None:
             # Caller specified an explicit FERPlus ONNX model path
@@ -116,9 +164,13 @@ class FacialEmotionAnalyzer:
         elif force_ferplus is True:
             # Caller explicitly forced FERPlus
             self._init_ferplus()
+            if not self.emotion_model_loaded:
+                self._init_emotiefflib()
         elif force_ferplus is False:
-            # Caller explicitly forced EmotiEffLib
+            # Caller explicitly requested EmotiEffLib; fall back to FERPlus if unavailable
             self._init_emotiefflib()
+            if not self.emotion_model_loaded:
+                self._init_ferplus()
         elif _DEFAULT_BACKEND == "ferplus":
             self._init_ferplus()
             if not self.emotion_model_loaded:
@@ -166,6 +218,7 @@ class FacialEmotionAnalyzer:
                 "EmotiEffLib failed to load (%s). Falling back to FERPlus.", exc
             )
             self._emotiefflib = None
+            self._init_ferplus()
 
     def _init_ferplus(self, explicit_path: Optional[str] = None) -> None:
         onnx_path = explicit_path
@@ -250,12 +303,18 @@ class FacialEmotionAnalyzer:
         else:
             quality_status = "good"
 
-        # 3. Face detection
+        # 3. Face detection with primary and adaptive fallback parameters
         faces = self.face_cascade.detectMultiScale(
             gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30)
         )
+        if len(faces) == 0:
+            # Adaptive fallback with lower threshold for angled/low-contrast faces
+            faces = self.face_cascade.detectMultiScale(
+                gray, scaleFactor=1.08, minNeighbors=3, minSize=(25, 25)
+            )
 
         if len(faces) == 0:
+            self.smoother.reset()
             status = "poor_image_quality" if quality_status in ["poor_lighting", "overexposed"] else "no_face"
             return self._build_empty_response(
                 valid_input=True,
@@ -280,6 +339,7 @@ class FacialEmotionAnalyzer:
 
             # If faces are of comparable size and neither is clearly the centered student
             if area_ratio > 0.65 and abs(cx0 - center_x) > (0.25 * width) and abs(cx1 - center_x) > (0.25 * width):
+                self.smoother.reset()
                 return {
                     "valid_input": True,
                     "face_detected": True,
@@ -355,7 +415,21 @@ class FacialEmotionAnalyzer:
         if quality_status != "good" and confidence < self.confidence_threshold:
             prediction_status = "poor_image_quality"
 
+        # Apply lightweight temporal smoothing across consecutive frames
+        if prediction_status == "valid_prediction" and emotion_probabilities:
+            smoothed_dom, smoothed_probs, smoothed_conf = self.smoother.update(
+                emotion_probabilities, face_detected=True
+            )
+            emotion_probabilities = smoothed_probs
+            if smoothed_dom in ALLOWED_EMOTIONS and smoothed_conf >= self.confidence_threshold:
+                dominant_emotion = smoothed_dom
+                confidence = round(smoothed_conf, 3)
+
         latency_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
+        logger.debug(
+            "[FACIAL INFERENCE] backend=%s, face=[%d,%d,%d,%d], dominant=%s, conf=%.3f, latency=%.1fms",
+            self.backend, x, y, w, h, dominant_emotion, confidence, latency_ms
+        )
 
         return {
             "valid_input": True,

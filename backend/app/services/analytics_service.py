@@ -18,6 +18,7 @@ if project_root not in sys.path:
 
 from ai.facial_emotion import FacialEmotionAnalyzer
 from ai.sentiment_analyzer import TextSentimentAnalyzer
+from ai.multimodal_fusion import multimodal_fusion, MultimodalEmotionFusion
 
 from app.schemas.analytics import (
     FacialAnalysisResult,
@@ -49,6 +50,7 @@ class AnalyticsService:
         # Initialize isolated AI analyzer engines
         self.facial_analyzer = FacialEmotionAnalyzer()
         self.sentiment_analyzer = TextSentimentAnalyzer()
+        self.multimodal_fusion = multimodal_fusion
 
     def process_facial_frame(self, frame_bytes_or_array: Any) -> FacialAnalysisResult:
         """
@@ -65,6 +67,23 @@ class AnalyticsService:
         """
         res = self.sentiment_analyzer.analyze_text(text, language=language or "en")
         return SentimentAnalysisResult(**res)
+
+    def fuse_multimodal_emotions(
+        self,
+        face_probabilities: Optional[Dict[str, float]] = None,
+        speech_probabilities: Optional[Dict[str, float]] = None,
+        face_confidence: float = 0.0,
+        speech_confidence: float = 0.0,
+    ) -> Dict[str, Any]:
+        """
+        Perform late fusion over facial expression and vocal speech emotion signals.
+        """
+        return self.multimodal_fusion.fuse(
+            face_probabilities=face_probabilities,
+            speech_probabilities=speech_probabilities,
+            face_confidence=face_confidence,
+            speech_confidence=speech_confidence,
+        )
 
     def calculate_composite_engagement(
         self,

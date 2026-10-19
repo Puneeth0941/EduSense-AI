@@ -48,7 +48,7 @@ SUPPORTED_LANGUAGES = {
 # Educational native script prompts to condition Whisper decoder
 LANGUAGE_PROMPTS = {
     "hi": "यह एक शैक्षिक व्याख्यान और कक्षा की चर्चा है।",
-    "en": "This is an educational classroom lecture.",
+    "en": "EduSense AI educational classroom lecture and student discussion.",
 }
 
 
@@ -119,6 +119,11 @@ class SpeechTranscriber:
                 resampled_frames = resampler.resample(frame)
                 for rf in resampled_frames:
                     frames_data.append(rf.to_ndarray().flatten())
+
+            # Flush any remaining audio buffered inside the resampler filter
+            flush_frames = resampler.resample(None)
+            for rf in flush_frames:
+                frames_data.append(rf.to_ndarray().flatten())
 
             if not frames_data:
                 return np.array([], dtype=np.float32)
@@ -270,18 +275,30 @@ class SpeechTranscriber:
         initial_prompt = LANGUAGE_PROMPTS.get(target_lang)
 
         try:
+            # Optimal faster-whisper decoding configuration:
+            # - beam_size: 5 for robust hypothesis search without hallucination
+            # - vad_filter: Silero VAD prevents decoding background room noise / breathing
+            # - condition_on_previous_text=False: avoids error cascading across segments
+            # - Kannada ('kn'): apply repetition penalty & n-gram constraint to avoid subword token looping
+            # - English ('en') & Hindi ('hi'): preserve natural repetition without artificial bans
+            rep_pen = 1.15 if target_lang == "kn" else 1.0
+            ngram_size = 3 if target_lang == "kn" else 0
+
             segments_gen, info = self.model.transcribe(
                 audio_array,
                 language=target_lang,
                 task="transcribe",
                 initial_prompt=initial_prompt,
                 condition_on_previous_text=False,
-                repetition_penalty=1.15,
-                no_repeat_ngram_size=3,
-                beam_size=beam_size,
+                beam_size=beam_size if beam_size is not None else 5,
+                repetition_penalty=rep_pen,
+                no_repeat_ngram_size=ngram_size,
                 temperature=temperature,
                 vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=250),
+                vad_parameters=dict(min_silence_duration_ms=400, speech_pad_ms=200),
+                compression_ratio_threshold=2.4,
+                no_speech_threshold=0.6,
+                log_prob_threshold=-1.0,
             )
 
             segments_list: List[Dict[str, Any]] = []
@@ -289,8 +306,22 @@ class SpeechTranscriber:
             logprobs: List[float] = []
             no_speech_probs: List[float] = []
 
+            # Hallucination filter for empty/silent trailing speech
+            HALLUCINATIONS = {
+                "thank you.", "thank you", "thank you very much.", "subtitles by",
+                "subtitles by the amara.org community", "bye.", "bye", "you", "you.",
+                "thank you for watching.", "thanks for watching."
+            }
+
             for seg in segments_gen:
                 clean_text = seg.text.strip()
+                no_speech = float(seg.no_speech_prob) if hasattr(seg, "no_speech_prob") and seg.no_speech_prob is not None else 0.0
+                avg_lp = float(seg.avg_logprob) if hasattr(seg, "avg_logprob") and seg.avg_logprob is not None else 0.0
+
+                # Filter out pure silence hallucinations
+                if clean_text.lower() in HALLUCINATIONS and (no_speech > 0.35 or avg_lp < -0.75):
+                    continue
+
                 if clean_text:
                     segments_list.append({
                         "start": round(float(seg.start), 2),
@@ -302,37 +333,6 @@ class SpeechTranscriber:
                         logprobs.append(float(seg.avg_logprob))
                     if hasattr(seg, "no_speech_prob") and seg.no_speech_prob is not None:
                         no_speech_probs.append(float(seg.no_speech_prob))
-
-            # If VAD was overly aggressive and filtered out audible speech (duration >= 0.5s), retry without VAD
-            if not text_pieces and duration_seconds >= 0.5 and rms >= 0.003:
-                try:
-                    fallback_gen, info = self.model.transcribe(
-                        audio_array,
-                        language=target_lang,
-                        task="transcribe",
-                        initial_prompt=initial_prompt,
-                        condition_on_previous_text=False,
-                        repetition_penalty=1.15,
-                        no_repeat_ngram_size=3,
-                        beam_size=beam_size,
-                        temperature=temperature,
-                        vad_filter=False,
-                    )
-                    for seg in fallback_gen:
-                        clean_text = seg.text.strip()
-                        if clean_text:
-                            segments_list.append({
-                                "start": round(float(seg.start), 2),
-                                "end": round(float(seg.end), 2),
-                                "text": clean_text,
-                            })
-                            text_pieces.append(clean_text)
-                            if hasattr(seg, "avg_logprob") and seg.avg_logprob is not None:
-                                logprobs.append(float(seg.avg_logprob))
-                            if hasattr(seg, "no_speech_prob") and seg.no_speech_prob is not None:
-                                no_speech_probs.append(float(seg.no_speech_prob))
-                except Exception as fb_err:
-                    logger.warning(f"[VAD FALLBACK WARNING] Non-VAD transcribe fallback warning: {fb_err}")
 
             full_transcript = " ".join(text_pieces).strip()
 
@@ -349,6 +349,21 @@ class SpeechTranscriber:
                 elif bool(re.search(r'[a-zA-Z]', full_transcript)) and detected_language not in ["hi", "kn"]:
                     detected_language = "en"
 
+            # If no speech was detected after VAD, return honest silence result
+            if not full_transcript:
+                return {
+                    "valid_input": True,
+                    "text": "",
+                    "language": detected_language,
+                    "language_probability": detected_prob,
+                    "duration_seconds": duration_seconds,
+                    "segments": [],
+                    "model_loaded": True,
+                    "quality_status": "silence",
+                    "is_low_confidence": False,
+                    "error": None,
+                }
+
             # Determine quality status and confidence flag
             mean_logprob = float(np.mean(logprobs)) if logprobs else 0.0
             max_no_speech = max(no_speech_probs, default=0.0)
@@ -361,7 +376,7 @@ class SpeechTranscriber:
                 # Low-resource Dravidian language in Whisper pretraining corpus
                 is_low_confidence = True
                 quality_status = "low_confidence"
-                quality_error = "Kannada recognition confidence is low in Whisper base/small models. Raw transcript preserved."
+                quality_error = "Kannada recognition confidence is moderate in Whisper base/small models. Raw transcript preserved."
             elif mean_logprob < -1.1 or max_no_speech > 0.6:
                 is_low_confidence = True
                 quality_status = "low_confidence"

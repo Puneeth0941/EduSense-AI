@@ -8,6 +8,7 @@ Provides endpoints for:
 - Session analytics overview & report generation
 """
 
+import os
 import logging
 import uuid
 import base64

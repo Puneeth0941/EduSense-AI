@@ -26,6 +26,7 @@ import type {
   LiveTranscriptMessage,
   SessionTranscriptItem,
   TranscriptionResponse,
+  SentimentAnalysisResult,
 } from '../types';
 import { StudentAttendanceStatusBadge } from '../components/StudentAttendanceStatusBadge';
 import { TeacherAttendanceModal } from '../components/TeacherAttendanceModal';
@@ -49,6 +50,11 @@ import {
   Subtitles,
   Languages,
   UploadCloud,
+  Square,
+  CheckCircle2,
+  Edit3,
+  Share2,
+  Sparkles,
 } from 'lucide-react';
 
 export const ClassroomPage: React.FC = () => {
@@ -214,8 +220,19 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
   const [showTeacherAttendanceModal, setShowTeacherAttendanceModal] = useState(false);
   const [facialWindowData, setFacialWindowData] = useState<any>(null);
 
-  // Whisper AI Speech-to-Text & Live Captions states
-  const [isLiveTranscribing, setIsLiveTranscribing] = useState(false);
+  // Whisper AI Speech-to-Text & Captions states
+  const [isRecordingSpeech, setIsRecordingSpeech] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isTranscribingSpeech, setIsTranscribingSpeech] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [editableTranscript, setEditableTranscript] = useState('');
+  const [latestSpeechResult, setLatestSpeechResult] = useState<TranscriptionResponse | null>(null);
+  const [customSentimentResult, setCustomSentimentResult] = useState<SentimentAnalysisResult | null>(null);
+  const [isEvaluatingSentiment, setIsEvaluatingSentiment] = useState(false);
+  const [hasSharedToClass, setHasSharedToClass] = useState(false);
+  const recordingTimerRef = useRef<any>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<'auto' | 'en' | 'kn' | 'hi'>('auto');
   const [transcriptTab, setTranscriptTab] = useState<'live' | 'history' | 'upload'>('live');
   const [liveTranscripts, setLiveTranscripts] = useState<LiveTranscriptMessage[]>([]);
@@ -227,7 +244,6 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
   const audioStreamRef = useRef<MediaStream | null>(null);
   const transcriptsBottomRef = useRef<HTMLDivElement>(null);
   const snippetSeqRef = useRef<number>(0);
-  const latestCaptionSeqRef = useRef<number>(0);
 
   // Audio Upload on-demand state
   const [selectedAudioFile, setSelectedAudioFile] = useState<File | null>(null);
@@ -309,20 +325,31 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
     active: boolean;
     lastSampleTime: string | null;
     attentivenessScore: number | null;
+    dominantEmotion: string | null;
+    confidence: number | null;
+    predictionStatus: string | null;
+    qualityStatus: string | null;
     orientation: string | null;
     isDistracted: boolean;
+    emotionBackend: string | null;
   }>({
     active: false,
     lastSampleTime: null,
     attentivenessScore: null,
+    dominantEmotion: null,
+    confidence: null,
+    predictionStatus: null,
+    qualityStatus: null,
     orientation: null,
     isDistracted: false,
+    emotionBackend: null,
   });
   const isAnalyticsSamplingRef = useRef(false);
 
-  // Facial Analytics Session relative timer & window refs (BUG 2 FIX)
+  // Facial Analytics Session relative timer & window refs
   const facialAnalyticsStartTimeRef = useRef<number | null>(null);
   const currentWindowRef = useRef<number>(0);
+  const sampleCounterRef = useRef<number>(0);
   const sampledSlotsRef = useRef<Set<string>>(new Set());
 
   // 5-Minute Window Facial Analytics Sampling Effect (Relative Timer)
@@ -414,8 +441,13 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
           active: true,
           lastSampleTime: timeStr,
           attentivenessScore: res.attentiveness_score ?? null,
+          dominantEmotion: res.dominant_emotion ?? null,
+          confidence: res.confidence ?? null,
+          predictionStatus: res.prediction_status ?? null,
+          qualityStatus: res.quality_status ?? null,
           orientation: res.head_pose?.orientation ?? null,
           isDistracted: !!res.is_distracted,
+          emotionBackend: res.emotion_backend ?? null,
         });
       } catch (err) {
         console.warn(`[FACIAL ANALYTICS SAMPLER - ${slotLabel}] Sample frame request error:`, err);
@@ -438,29 +470,16 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
         console.log(`[FACIAL SAMPLER] Relative 5-minute window advanced to Window #${windowIndex}`);
       }
 
-      // Seconds elapsed within current 5-minute window
-      const secInWindow = totalElapsedSec - (windowIndex * 300);
+      sampleCounterRef.current += 1;
+      const slotIndex = ((sampleCounterRef.current - 1) % 3) + 1;
+      const slotLabel = `sample-${slotIndex}`;
+      const slotKey = `window_${windowIndex}_sample_${sampleCounterRef.current}`;
 
-      let slotLabel: string | null = null;
-
-      if (secInWindow >= 5 && secInWindow < 20) {
-        slotLabel = 'sample-1';
-      } else if (secInWindow >= 145 && secInWindow < 160) {
-        slotLabel = 'sample-2';
-      } else if (secInWindow >= 275 && secInWindow < 290) {
-        slotLabel = 'sample-3';
-      }
-
-      if (slotLabel) {
-        const slotKey = `window_${windowIndex}_${slotLabel}`;
-        if (!sampledSlotsRef.current.has(slotKey)) {
-          sampleFacialAnalyticsFrame(slotLabel, slotKey, totalElapsedSec);
-        }
-      }
+      sampleFacialAnalyticsFrame(slotLabel, slotKey, totalElapsedSec);
     };
 
-    const initialTimeout = setTimeout(checkScheduledSample, 1000);
-    const interval = setInterval(checkScheduledSample, 1000);
+    const initialTimeout = setTimeout(checkScheduledSample, 1500);
+    const interval = setInterval(checkScheduledSample, 4000);
 
     setAnalyticsStatus(prev => ({ ...prev, active: true }));
 
@@ -571,141 +590,229 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
     };
   }, [room, navigate]);
 
-  // Real-time Audio Snippet Recorder for Whisper Speech-to-Text
-  useEffect(() => {
-    if (!isLiveTranscribing || !isMicOn) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        try { mediaRecorderRef.current.stop(); } catch {}
+  // Format recording timer helper (mm:ss)
+  const formatTimer = (totalSec: number) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  // Dedicated Record & Transcribe: Start Recording
+  const startRecordingSpeech = async () => {
+    if (isRecordingSpeech || isTranscribingSpeech) return;
+    setSpeechError(null);
+
+    try {
+      let stream = audioStreamRef.current;
+      const micTrack = localParticipant?.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+
+      if (!stream || !stream.active || (micTrack && !stream.getAudioTracks().includes(micTrack))) {
+        if (micTrack && micTrack.readyState === 'live') {
+          stream = new MediaStream([micTrack]);
+        } else if (navigator?.mediaDevices?.getUserMedia) {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+        audioStreamRef.current = stream;
       }
-      return;
-    }
 
-    let isCancelled = false;
-    let loopTimeout: any = null;
+      if (!stream || stream.getAudioTracks().length === 0) {
+        setSpeechError('Microphone input is unavailable. Please check your mic permissions and connections.');
+        return;
+      }
 
-    const recordAudioSlice = async () => {
-      if (isCancelled || !isLiveTranscribing || !isMicOn) return;
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : '';
 
-      try {
-        let stream = audioStreamRef.current;
-        const micTrack = localParticipant?.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recordingChunksRef.current = [];
 
-        if (!stream || !stream.active || (micTrack && !stream.getAudioTracks().includes(micTrack))) {
-          if (micTrack && micTrack.readyState === 'live') {
-            stream = new MediaStream([micTrack]);
-          } else if (navigator?.mediaDevices?.getUserMedia) {
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          }
-          audioStreamRef.current = stream;
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordingChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+          recordingTimerRef.current = null;
         }
 
-        if (!stream || stream.getAudioTracks().length === 0) {
-          loopTimeout = setTimeout(recordAudioSlice, 3000);
+        const chunks = recordingChunksRef.current;
+        if (chunks.length === 0) {
+          setIsTranscribingSpeech(false);
+          setSpeechError('No audio captured. Please ensure your microphone is picking up sound.');
           return;
         }
 
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-          ? 'audio/ogg;codecs=opus'
-          : '';
-
-        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        mediaRecorderRef.current = recorder;
-        const chunks: Blob[] = [];
-
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            chunks.push(e.data);
-          }
-        };
-
-        recorder.onstop = async () => {
-          if (isCancelled) return;
-
-          // Seamless restart: immediately begin next slice without dead gap
-          if (!isCancelled && isLiveTranscribing && isMicOn) {
-            recordAudioSlice();
-          }
-
-          if (chunks.length > 0) {
-            const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-            if (blob.size >= 800) {
-              const reader = new FileReader();
-              reader.onloadend = async () => {
-                const b64 = reader.result as string;
-                if (!b64 || isCancelled) return;
-                const seq = ++snippetSeqRef.current;
-                try {
-                  const res = await transcriptionApi.transcribeSnippet({
-                    session_id: sessionId,
-                    audio_base64: b64,
-                    mime_type: blob.type || 'audio/webm',
-                    language: transcriptionLanguage,
-                    enrich_sentiment: true,
-                  });
-
-                  if (res && res.text && res.text.trim()) {
-                    const msg: LiveTranscriptMessage = {
-                      id: res.analysis_id || `${Date.now()}_${seq}`,
-                      speakerName: joinData.participant_name,
-                      speakerIdentity: joinData.participant_identity,
-                      speakerRole: joinData.role,
-                      text: res.text.trim(),
-                      language: res.language,
-                      sentimentLabel: res.sentiment_label,
-                      quality_status: res.quality_status,
-                      is_low_confidence: res.is_low_confidence,
-                      timestamp: Date.now(),
-                    };
-                    setLiveTranscripts((prev) => [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
-                    if (seq >= latestCaptionSeqRef.current) {
-                      latestCaptionSeqRef.current = seq;
-                      displayCaption(msg);
-                    }
-
-                    if (room && localParticipant) {
-                      const encoder = new TextEncoder();
-                      const payload = encoder.encode(JSON.stringify({
-                        type: 'TRANSCRIPT',
-                        ...msg,
-                      }));
-                      localParticipant.publishData(payload, { reliable: true });
-                    }
-                  }
-                } catch (tErr) {
-                  console.warn('[WHISPER STREAM] Snippet transcribe warning:', tErr);
-                }
-              };
-              reader.readAsDataURL(blob);
-            }
-          }
-        };
-
-        recorder.start();
-        setTimeout(() => {
-          if (recorder.state === 'recording') {
-            recorder.stop();
-          }
-        }, 4500);
-      } catch (recErr) {
-        console.warn('[WHISPER RECORDER ERROR]', recErr);
-        if (!isCancelled && isLiveTranscribing && isMicOn) {
-          loopTimeout = setTimeout(recordAudioSlice, 4000);
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        if (blob.size < 1000) {
+          setIsTranscribingSpeech(false);
+          setSpeechError('Recording was too short to transcribe. Please speak for at least 1-2 seconds.');
+          return;
         }
-      }
+
+        // Send recording to backend
+        try {
+          setIsTranscribingSpeech(true);
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const b64 = reader.result as string;
+            if (!b64) {
+              setIsTranscribingSpeech(false);
+              setSpeechError('Failed to encode audio for upload.');
+              return;
+            }
+
+            try {
+              const res = await transcriptionApi.transcribeSnippet({
+                session_id: sessionId,
+                audio_base64: b64,
+                mime_type: blob.type || 'audio/webm',
+                language: transcriptionLanguage,
+                enrich_sentiment: true,
+              });
+
+              setLatestSpeechResult(res);
+
+              if (res.quality_status === 'silence' || !res.text || !res.text.trim()) {
+                setEditableTranscript('');
+                setSpeechError('No speech detected (silence or quiet room). Please speak clearly into the microphone.');
+              } else {
+                const cleanText = res.text.trim();
+                setEditableTranscript(cleanText);
+                setCustomSentimentResult(null);
+                setHasSharedToClass(false);
+              }
+            } catch (apiErr: any) {
+              console.error('[SPEECH TRANSCRIBE ERROR]', apiErr);
+              setSpeechError(apiErr.message || 'Speech transcription failed. Please check backend connection.');
+            } finally {
+              setIsTranscribingSpeech(false);
+            }
+          };
+          reader.readAsDataURL(blob);
+        } catch (err: any) {
+          setIsTranscribingSpeech(false);
+          setSpeechError(err.message || 'Error processing recorded audio.');
+        }
+      };
+
+      recorder.start();
+      setIsRecordingSpeech(true);
+      setRecordingSeconds(0);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+
+    } catch (err: any) {
+      console.error('[RECORD SPEECH START ERROR]', err);
+      setSpeechError(err.message || 'Failed to start microphone recording. Please allow mic permissions.');
+      setIsRecordingSpeech(false);
+    }
+  };
+
+  // Stop recording and trigger transcription
+  const stopAndTranscribeSpeech = () => {
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state !== 'recording') return;
+    setIsRecordingSpeech(false);
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    setIsTranscribingSpeech(true);
+    try {
+      mediaRecorderRef.current.stop();
+    } catch (err: any) {
+      setIsTranscribingSpeech(false);
+      setSpeechError(err.message || 'Failed to finalize microphone recording.');
+    }
+  };
+
+  // Cancel recording without transcribing
+  const cancelRecordingSpeech = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.onstop = null;
+      try { mediaRecorderRef.current.stop(); } catch {}
+    }
+    recordingChunksRef.current = [];
+    setIsRecordingSpeech(false);
+    setRecordingSeconds(0);
+    setSpeechError(null);
+  };
+
+  // Re-run sentiment analysis on edited transcript text
+  const handleRerunSentiment = async () => {
+    if (!editableTranscript || !editableTranscript.trim()) return;
+    setIsEvaluatingSentiment(true);
+    setSpeechError(null);
+    try {
+      const res = await transcriptionApi.analyzeTextSentiment({
+        text: editableTranscript.trim(),
+        language: transcriptionLanguage,
+      });
+      setCustomSentimentResult(res);
+    } catch (err: any) {
+      setSpeechError(err.message || 'Failed to analyze transcript sentiment.');
+    } finally {
+      setIsEvaluatingSentiment(false);
+    }
+  };
+
+  // Share current transcript to classroom (broadcast & live transcript history)
+  const handleShareToClassroom = () => {
+    if (!editableTranscript || !editableTranscript.trim() || !joinData) return;
+    const cleanText = editableTranscript.trim();
+    const activeSentiment = customSentimentResult?.sentiment_label || latestSpeechResult?.sentiment_label;
+    const activeLanguage = customSentimentResult?.language || latestSpeechResult?.language || (transcriptionLanguage === 'auto' ? 'en' : transcriptionLanguage);
+
+    const seq = ++snippetSeqRef.current;
+    const msg: LiveTranscriptMessage = {
+      id: `${Date.now()}_${seq}`,
+      speakerName: joinData.participant_name,
+      speakerIdentity: joinData.participant_identity,
+      speakerRole: joinData.role,
+      text: cleanText,
+      language: activeLanguage,
+      sentimentLabel: activeSentiment,
+      quality_status: latestSpeechResult?.quality_status || 'reliable',
+      is_low_confidence: latestSpeechResult?.is_low_confidence,
+      timestamp: Date.now(),
     };
 
-    recordAudioSlice();
+    setLiveTranscripts((prev) => [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
+    displayCaption(msg);
 
+    if (room && localParticipant) {
+      const encoder = new TextEncoder();
+      const payload = encoder.encode(JSON.stringify({
+        type: 'TRANSCRIPT',
+        ...msg,
+      }));
+      localParticipant.publishData(payload, { reliable: true });
+    }
+
+    setHasSharedToClass(true);
+  };
+
+  // Clean up recording on unmount
+  useEffect(() => {
     return () => {
-      isCancelled = true;
-      if (loopTimeout) clearTimeout(loopTimeout);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         try { mediaRecorderRef.current.stop(); } catch {}
       }
     };
-  }, [isLiveTranscribing, isMicOn, transcriptionLanguage, localParticipant, sessionId, room, joinData]);
+  }, []);
 
   // Load saved session transcripts from backend database
   const loadSessionHistory = async () => {
@@ -1114,9 +1221,12 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
                 <span className={analyticsStatus.active ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
                   {analyticsStatus.active ? 'Active (4s)' : 'Paused'}
                 </span>
-                {analyticsStatus.lastSampleTime && (
-                  <span className="text-[11px] text-slate-400">
-                    | {analyticsStatus.lastSampleTime}
+                {analyticsStatus.dominantEmotion && analyticsStatus.dominantEmotion !== 'no_face_detected' && (
+                  <span className="text-[11px] text-cyan-300 font-semibold">
+                    | Expression: <span className="capitalize">{analyticsStatus.dominantEmotion}</span>
+                    {analyticsStatus.confidence !== null && analyticsStatus.confidence > 0 && (
+                      <span className="text-slate-400 font-normal"> ({Math.round(analyticsStatus.confidence * 100)}%)</span>
+                    )}
                   </span>
                 )}
                 {analyticsStatus.attentivenessScore !== null && (
@@ -1198,6 +1308,7 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
                     participant={p}
                     compact
                     videoRef={p.isLocal ? localVideoRef : undefined}
+                    analyticsStatus={p.isLocal ? analyticsStatus : null}
                   />
                 ))}
               </div>
@@ -1222,6 +1333,7 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
                   key={p.sid}
                   participant={p}
                   videoRef={p.isLocal ? localVideoRef : undefined}
+                  analyticsStatus={p.isLocal ? analyticsStatus : null}
                 />
               ))}
             </div>
@@ -1510,10 +1622,10 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
               </button>
             </div>
 
-            {/* Tab 1: Live Speech */}
+            {/* Tab 1: Live Speech & Sentiment Studio */}
             {transcriptTab === 'live' && (
               <div className="flex-1 flex flex-col min-h-0">
-                {/* Control Panel: Language Selector & Live Toggle */}
+                {/* Language Selector & Engine Metadata */}
                 <div className="p-3 bg-slate-950 border-b border-slate-800/80 space-y-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 text-xs text-slate-300 font-medium">
@@ -1532,40 +1644,233 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
                     </select>
                   </div>
 
-                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2.5 h-2.5 rounded-full ${isLiveTranscribing ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-                      <span className="text-xs font-semibold text-slate-200">
-                        {isLiveTranscribing ? 'Live Transcription Active' : 'Live Transcription Paused'}
-                      </span>
+                  {/* Microphone Recorder Control Panel */}
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 space-y-2.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2.5 h-2.5 rounded-full ${isRecordingSpeech ? 'bg-rose-500 animate-ping' : 'bg-slate-600'}`} />
+                        <span className="text-xs font-bold text-white">
+                          {isRecordingSpeech ? (
+                            <span className="text-rose-400 font-mono">REC {formatTimer(recordingSeconds)}</span>
+                          ) : isTranscribingSpeech ? (
+                            <span className="text-indigo-400">Processing Audio...</span>
+                          ) : (
+                            'Microphone Ready'
+                          )}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono">Whisper AI (small)</span>
                     </div>
-                    <button
-                      onClick={() => setIsLiveTranscribing(!isLiveTranscribing)}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        isLiveTranscribing
-                          ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
-                          : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-md shadow-indigo-600/20'
-                      }`}
-                    >
-                      {isLiveTranscribing ? 'Stop' : 'Start'}
-                    </button>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-2">
+                      {!isRecordingSpeech ? (
+                        <button
+                          onClick={startRecordingSpeech}
+                          disabled={isTranscribingSpeech}
+                          className="flex-1 py-2 px-3 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 disabled:opacity-50 text-white font-semibold text-xs rounded-lg transition-all flex items-center justify-center gap-2 shadow-md shadow-rose-900/30"
+                        >
+                          <Mic className="w-3.5 h-3.5" />
+                          <span>Record Speech</span>
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={stopAndTranscribeSpeech}
+                            className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition-all flex items-center justify-center gap-2 shadow-md shadow-indigo-600/30"
+                          >
+                            <Square className="w-3.5 h-3.5 fill-white" />
+                            <span>Stop & Transcribe</span>
+                          </button>
+                          <button
+                            onClick={cancelRecordingSpeech}
+                            className="py-2 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs rounded-lg transition-all"
+                            title="Cancel recording"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {isTranscribingSpeech && (
+                      <div className="flex items-center justify-center gap-2 py-1 text-xs text-indigo-400">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Transcribing & scoring sentiment...</span>
+                      </div>
+                    )}
                   </div>
 
-                  {isLiveTranscribing && !isMicOn && (
-                    <div className="text-[11px] text-amber-400 bg-amber-950/40 border border-amber-800/40 rounded-lg p-2">
-                      ⚠️ Microphone is currently muted. Unmute to transcribe your speech.
+                  {/* Error / Silence Notification Banner */}
+                  {speechError && (
+                    <div className="p-2.5 bg-rose-950/50 border border-rose-800/60 rounded-xl text-xs text-rose-300 flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <span className="font-semibold block">Notice:</span>
+                        <p className="text-[11px] leading-relaxed text-rose-200">{speechError}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isMicOn && (
+                    <div className="text-[11px] text-amber-400 bg-amber-950/40 border border-amber-800/40 rounded-lg p-2 flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Microphone is currently muted in bottom bar. Unmute to speak.</span>
                     </div>
                   )}
                 </div>
 
-                {/* Transcripts Stream */}
-                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 min-h-0">
+                {/* Main Content Area: Transcript Review / Edit or Stream */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
+                  {/* Latest Transcript Review & Sentiment Evaluation Card */}
+                  {editableTranscript && (
+                    <div className="p-3 bg-slate-950 border border-indigo-900/60 rounded-xl space-y-2.5 shadow-md">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5 text-indigo-300 font-bold">
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Review & Correct Transcript</span>
+                        </div>
+                        {latestSpeechResult?.duration && (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {latestSpeechResult.duration.toFixed(1)}s
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Editable Textarea */}
+                      <textarea
+                        value={editableTranscript}
+                        onChange={(e) => {
+                          setEditableTranscript(e.target.value);
+                          setHasSharedToClass(false);
+                        }}
+                        rows={3}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-lg p-2.5 text-xs text-white leading-relaxed resize-none focus:outline-none"
+                        placeholder="Transcribed words appear here. You can edit any word..."
+                      />
+
+                      {/* Sentiment & Intent Result Display */}
+                      {(() => {
+                        const sentiment = customSentimentResult || (latestSpeechResult?.sentiment_label ? {
+                          sentiment_label: latestSpeechResult.sentiment_label,
+                          sentiment_score: latestSpeechResult.sentiment_score,
+                          confidence: latestSpeechResult.is_low_confidence ? 0.65 : 0.85,
+                          is_question: Boolean(latestSpeechResult.is_question),
+                          is_confusion: Boolean(latestSpeechResult.is_confusion),
+                          language: latestSpeechResult.language,
+                          language_supported: (latestSpeechResult.language || 'en') === 'en',
+                          note: undefined,
+                        } : null);
+
+                        if (!sentiment) return null;
+
+                        const isPos = sentiment.sentiment_label?.toLowerCase() === 'positive';
+                        const isNeg = sentiment.sentiment_label?.toLowerCase() === 'negative';
+                        const isUnsupported = sentiment.sentiment_label?.toLowerCase() === 'unsupported_language' || !sentiment.language_supported;
+
+                        return (
+                          <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                Text Sentiment Analysis
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {isUnsupported ? (
+                                  <span className="text-[10px] px-2 py-0.5 rounded font-semibold bg-amber-950 text-amber-300 border border-amber-800">
+                                    Unsupported Language
+                                  </span>
+                                ) : (
+                                  <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                                    isPos ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' :
+                                    isNeg ? 'bg-rose-950 text-rose-400 border border-rose-900' :
+                                    'bg-slate-800 text-slate-300 border border-slate-700'
+                                  }`}>
+                                    {sentiment.sentiment_label}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Valence and Confidence Metrics */}
+                            {!isUnsupported ? (
+                              <div className="flex items-center gap-3 text-[11px] text-slate-300 font-mono">
+                                {sentiment.sentiment_score !== null && sentiment.sentiment_score !== undefined && (
+                                  <span>Score: <b className="text-white">{sentiment.sentiment_score > 0 ? `+${sentiment.sentiment_score}` : sentiment.sentiment_score}</b></span>
+                                )}
+                                {sentiment.confidence !== null && sentiment.confidence !== undefined && (
+                                  <span>Confidence: <b className="text-white">{Math.round(sentiment.confidence * 100)}%</b></span>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-amber-300 leading-normal">
+                                ℹ️ Rule-based text sentiment is calibrated for English. Sentiment for this language is not currently supported.
+                              </p>
+                            )}
+
+                            {/* Intent Badges */}
+                            <div className="flex items-center gap-1.5 pt-0.5">
+                              {sentiment.is_question && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">
+                                  ❓ Question Detected
+                                </span>
+                              )}
+                              {sentiment.is_confusion && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                                  💡 Query / Confusion
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Review Actions */}
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={handleRerunSentiment}
+                          disabled={isEvaluatingSentiment || !editableTranscript.trim()}
+                          className="flex-1 py-1.5 px-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        >
+                          <Sparkles className={`w-3.5 h-3.5 text-indigo-400 ${isEvaluatingSentiment ? 'animate-spin' : ''}`} />
+                          <span>{isEvaluatingSentiment ? 'Analyzing...' : 'Rerun Sentiment'}</span>
+                        </button>
+                        <button
+                          onClick={handleShareToClassroom}
+                          disabled={hasSharedToClass || !editableTranscript.trim()}
+                          className={`flex-1 py-1.5 px-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            hasSharedToClass
+                              ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60'
+                              : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30'
+                          }`}
+                        >
+                          {hasSharedToClass ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Shared to Class!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Share2 className="w-3.5 h-3.5" />
+                              <span>Post to Captions</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Classroom Transcripts Feed Header */}
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-400 pt-1 border-t border-slate-800/60">
+                    <span>Classroom Transcripts Stream</span>
+                    <span className="text-[10px] font-mono text-slate-500">{liveTranscripts.length} entries</span>
+                  </div>
+
                   {liveTranscripts.length === 0 ? (
-                    <div className="text-center text-slate-500 text-xs py-12 px-4 space-y-2">
-                      <Subtitles className="w-8 h-8 text-slate-600 mx-auto opacity-50" />
-                      <p className="font-medium text-slate-400">No live speech transcribed yet</p>
+                    <div className="text-center text-slate-500 text-xs py-8 px-4 space-y-2">
+                      <Subtitles className="w-7 h-7 text-slate-600 mx-auto opacity-50" />
+                      <p className="font-medium text-slate-400">No transcripts posted yet</p>
                       <p className="text-[11px] text-slate-500">
-                        Enable Live Transcription and speak with your mic on. Transcripts will appear in real time for everyone in the classroom!
+                        Record your voice above or upload audio to generate accurate Whisper transcripts and text sentiment!
                       </p>
                     </div>
                   ) : (
@@ -1598,11 +1903,12 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
                           )}
                           {t.sentimentLabel && (
                             <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
-                              t.sentimentLabel === 'POSITIVE' ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' :
-                              t.sentimentLabel === 'NEGATIVE' ? 'bg-rose-950 text-rose-400 border border-rose-900' :
+                              t.sentimentLabel.toUpperCase() === 'POSITIVE' ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' :
+                              t.sentimentLabel.toUpperCase() === 'NEGATIVE' ? 'bg-rose-950 text-rose-400 border border-rose-900' :
+                              t.sentimentLabel.toUpperCase() === 'UNSUPPORTED_LANGUAGE' ? 'bg-amber-950 text-amber-400 border border-amber-900' :
                               'bg-slate-900 text-slate-400 border border-slate-800'
                             }`}>
-                              {t.sentimentLabel}
+                              {t.sentimentLabel.toUpperCase()}
                             </span>
                           )}
                           {t.is_low_confidence && (
@@ -1866,8 +2172,8 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
           >
             <Subtitles className="w-4 h-4" />
             <span>Transcripts</span>
-            {isLiveTranscribing && (
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+            {isRecordingSpeech && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse ml-0.5" />
             )}
           </button>
 
@@ -1928,10 +2234,19 @@ const ParticipantTile: React.FC<{
   participant: Participant;
   compact?: boolean;
   videoRef?: React.Ref<HTMLVideoElement>;
+  analyticsStatus?: {
+    active: boolean;
+    dominantEmotion: string | null;
+    confidence: number | null;
+    predictionStatus: string | null;
+    qualityStatus: string | null;
+    isDistracted: boolean;
+  } | null;
 }> = ({
   participant,
   compact = false,
   videoRef,
+  analyticsStatus,
 }) => {
   const cameraPub = participant.getTrackPublication(Track.Source.Camera);
   const micPub = participant.getTrackPublication(Track.Source.Microphone);
@@ -1978,6 +2293,54 @@ const ParticipantTile: React.FC<{
           {!compact && (
             <span className="text-sm font-semibold text-slate-300">{displayName}</span>
           )}
+        </div>
+      )}
+
+      {/* Live AI Facial Expression & Emotion Badge Overlay (For Local Student) */}
+      {participant.isLocal && analyticsStatus && analyticsStatus.active && (
+        <div className="absolute top-3 right-3 z-10 pointer-events-none">
+          <div className="bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 text-xs font-medium shadow-xl flex items-center gap-1.5 transition-all">
+            {analyticsStatus.predictionStatus === 'no_face' ? (
+              <span className="text-amber-400 flex items-center gap-1 font-semibold">
+                <span>⚠️</span> No Face Detected
+              </span>
+            ) : analyticsStatus.qualityStatus && analyticsStatus.qualityStatus !== 'good' ? (
+              <span className="text-amber-400 flex items-center gap-1 font-semibold">
+                <span>⚠️</span> Low Lighting / Quality
+              </span>
+            ) : analyticsStatus.dominantEmotion === 'uncertain' || analyticsStatus.predictionStatus === 'low_confidence' ? (
+              <span className="text-slate-300 flex items-center gap-1">
+                <span>🤔</span> Evaluating Expression...
+              </span>
+            ) : analyticsStatus.dominantEmotion ? (
+              <span className="flex items-center gap-1.5 font-semibold text-white">
+                <span>
+                  {analyticsStatus.dominantEmotion === 'happy' ? '😊' :
+                   analyticsStatus.dominantEmotion === 'neutral' ? '😐' :
+                   analyticsStatus.dominantEmotion === 'surprise' ? '😲' :
+                   analyticsStatus.dominantEmotion === 'sad' ? '😔' :
+                   analyticsStatus.dominantEmotion === 'angry' ? '😠' :
+                   analyticsStatus.dominantEmotion === 'fear' ? '😨' :
+                   analyticsStatus.dominantEmotion === 'disgust' ? '😣' : '😐'}
+                </span>
+                <span className="capitalize text-emerald-400">
+                  {analyticsStatus.dominantEmotion}
+                </span>
+                {analyticsStatus.confidence !== null && analyticsStatus.confidence > 0 && (
+                  <span className="text-[11px] text-slate-300 font-normal">
+                    ({Math.round(analyticsStatus.confidence * 100)}%)
+                  </span>
+                )}
+                {analyticsStatus.isDistracted && (
+                  <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    Looking Away
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-slate-400">AI Emotion: Standby</span>
+            )}
+          </div>
         </div>
       )}
 

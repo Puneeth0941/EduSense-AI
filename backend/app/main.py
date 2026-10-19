@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.api.health import router as health_router
+from app.db.session import get_db
+from app.api.health import router as health_router, check_health
 from app.api.auth import router as auth_router
 from app.api.classrooms import router as classrooms_router
 from app.api.sessions import router as sessions_router
@@ -39,6 +41,11 @@ app.include_router(analytics_router, prefix=f"{settings.API_V1_PREFIX}/analytics
 app.include_router(transcription_router, prefix=f"{settings.API_V1_PREFIX}/transcription", tags=["Speech Transcription"])
 
 
+
+
+@app.get("/health")
+def health_alias(db: Session = Depends(get_db)):
+    return check_health(db)
 
 
 @app.get("/")

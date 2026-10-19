@@ -22,8 +22,11 @@ from app.schemas.transcription import (
     AudioSnippetInput,
     LanguageOption,
     SessionTranscriptItem,
+    TextSentimentRequest,
 )
+from app.schemas.analytics import SentimentAnalysisResult
 from app.services.transcription_service import transcription_service
+from app.services.analytics_service import analytics_service
 
 logger = logging.getLogger(__name__)
 
@@ -241,3 +244,24 @@ def get_session_transcripts(
         )
 
     return items
+
+
+@router.post("/analyze-text", response_model=SentimentAnalysisResult)
+def analyze_transcript_text(
+    data: TextSentimentRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Directly analyze text sentiment and educational intent for a transcript.
+    Enables students and teachers to review, edit, and rerun sentiment analysis without re-uploading audio.
+    """
+    if not data.text or not data.text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transcript text cannot be empty."
+        )
+    return analytics_service.process_text_sentiment(
+        text=data.text.strip(),
+        language=data.language or "auto",
+    )
+
