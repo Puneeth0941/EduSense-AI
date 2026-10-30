@@ -1,0 +1,17 @@
+# Ngrok configuration for EduSense AI
+# Usage with dual tunnels:
+# ngrok start --all --config ngrok.yml
+#
+# Note: If your ngrok account is on the free tier, ngrok may restrict you to 1 active online domain.
+# In that case, you can either:
+# Option A (Recommended for Free Tier): Run `ngrok http 5175` -> Vite's proxy automatically routes `/api` to port 8000!
+# Option B (Paid / Multi-Tunnel): Run `ngrok start --all --config ngrok.yml`
+
+version: "2"
+tunnels:
+  frontend:
+    proto: http
+    addr: 5175
+  backend:
+    proto: http
+    addr: 8000

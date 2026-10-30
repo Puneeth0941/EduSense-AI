@@ -17,14 +17,83 @@ import type {
   LanguageOption,
   SessionTranscriptItem,
   SentimentAnalysisResult,
+  EnrolledStudent,
+  RegisteredStudent,
 } from '../types';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const resolveApiBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const isRemote = window.location.hostname && 
+                     window.location.hostname !== 'localhost' && 
+                     window.location.hostname !== '127.0.0.1';
+
+    // 1. Check URL query parameters: ?api_url=https://... or ?backend_url=https://...
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryApiUrl = urlParams.get('api_url') || urlParams.get('backend_url');
+      if (queryApiUrl && queryApiUrl.trim()) {
+        const cleaned = queryApiUrl.trim().replace(/\/+$/, '');
+        const finalUrl = cleaned.endsWith('/api') ? cleaned : `${cleaned}/api`;
+        localStorage.setItem('edusense_api_url', finalUrl);
+        // Clean URL parameter without reloading
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('api_url');
+        cleanUrl.searchParams.delete('backend_url');
+        window.history.replaceState({}, document.title, cleanUrl.toString());
+        return finalUrl;
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+
+    // 2. Check for manual local override in browser (allows switching backend tunnels on the fly)
+    const localOverride = localStorage.getItem('edusense_api_url');
+    if (localOverride && localOverride.trim()) {
+      const trimmed = localOverride.trim().replace(/\/+$/, '');
+      const isOverrideLocalhost = trimmed.includes('localhost') || trimmed.includes('127.0.0.1');
+      // If we are on a remote PC, discard any old localhost override that may have been stored
+      if (isRemote && isOverrideLocalhost) {
+        try { localStorage.removeItem('edusense_api_url'); } catch {}
+      } else {
+        return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+      }
+    }
+
+    // 3. Check for environment variable VITE_API_BASE_URL or VITE_API_URL
+    const envUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
+    if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+      const trimmed = envUrl.trim().replace(/\/+$/, '');
+      const isEnvLocalhost = trimmed.includes('localhost') || trimmed.includes('127.0.0.1');
+      // If accessed from a remote device, ignore localhost environment variables!
+      if (!isRemote || !isEnvLocalhost) {
+        return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+      }
+    }
+
+    // 4. If accessed through external domain / ngrok without a separate backend URL specified,
+    // use same-origin /api so requests are proxied by Vite to port 8000
+    if (isRemote) {
+      return '/api';
+    }
+  }
+
+  // 5. Default to same-origin /api (proxied by Vite to port 8000)
+  return '/api';
+};
+
+export const getApiBaseUrl = (): string => resolveApiBaseUrl();
+
+export const API_BASE_URL = {
+  toString: () => resolveApiBaseUrl(),
+  valueOf: () => resolveApiBaseUrl(),
+  [Symbol.toPrimitive]: () => resolveApiBaseUrl(),
+} as unknown as string;
 
 const getAuthHeaders = (): HeadersInit => {
   const token = localStorage.getItem('edusense_token');
   return {
     'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 };
@@ -50,7 +119,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export async function fetchHealthStatus(): Promise<any> {
-  const res = await fetch(`${API_BASE_URL}/health`);
+  const res = await fetch(`${API_BASE_URL}/health`, {
+    headers: { 'ngrok-skip-browser-warning': 'true' },
+  });
   return handleResponse<any>(res);
 }
 
@@ -58,7 +129,10 @@ export const authApi = {
   login: async (email: string, password: string): Promise<AuthResponse> => {
     const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
       body: JSON.stringify({ email, password }),
     });
     return handleResponse<AuthResponse>(res);
@@ -67,7 +141,10 @@ export const authApi = {
   registerTeacher: async (data: any): Promise<User> => {
     const res = await fetch(`${API_BASE_URL}/auth/register/teacher`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
       body: JSON.stringify(data),
     });
     return handleResponse<User>(res);
@@ -76,7 +153,10 @@ export const authApi = {
   registerStudent: async (data: any): Promise<User> => {
     const res = await fetch(`${API_BASE_URL}/auth/register/student`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
       body: JSON.stringify(data),
     });
     return handleResponse<User>(res);
@@ -98,7 +178,13 @@ export const classroomApi = {
     return handleResponse<Classroom[]>(res);
   },
 
-  createClassroom: async (data: { title: string; description?: string; course_code: string }): Promise<Classroom> => {
+  createClassroom: async (data: {
+    title: string;
+    description?: string;
+    course_code: string;
+    department?: string;
+    semester?: string;
+  }): Promise<Classroom> => {
     const res = await fetch(`${API_BASE_URL}/classrooms/`, {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -112,6 +198,56 @@ export const classroomApi = {
       headers: getAuthHeaders(),
     });
     return handleResponse<Classroom>(res);
+  },
+
+  listRegisteredStudents: async (): Promise<RegisteredStudent[]> => {
+    const res = await fetch(`${API_BASE_URL}/classrooms/registered-students`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<RegisteredStudent[]>(res);
+  },
+
+  listEnrolledStudents: async (classroomId: string): Promise<EnrolledStudent[]> => {
+    const res = await fetch(`${API_BASE_URL}/classrooms/${classroomId}/students`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<EnrolledStudent[]>(res);
+  },
+
+  enrollStudent: async (
+    classroomId: string,
+    data: { student_id?: string; student_id_number?: string }
+  ): Promise<EnrolledStudent> => {
+    const res = await fetch(`${API_BASE_URL}/classrooms/${classroomId}/enroll`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<EnrolledStudent>(res);
+  },
+
+  removeStudent: async (classroomId: string, studentId: string): Promise<{ detail: string }> => {
+    const res = await fetch(`${API_BASE_URL}/classrooms/${classroomId}/students/${studentId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<{ detail: string }>(res);
+  },
+
+  joinCourse: async (courseCode: string): Promise<Classroom> => {
+    const res = await fetch(`${API_BASE_URL}/classrooms/join`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ course_code: courseCode }),
+    });
+    return handleResponse<Classroom>(res);
+  },
+
+  listEnrolledCourses: async (): Promise<Classroom[]> => {
+    const res = await fetch(`${API_BASE_URL}/classrooms/enrolled`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<Classroom[]>(res);
   },
 };
 
@@ -274,6 +410,68 @@ export const attendanceApi = {
     });
     return handleResponse<TeacherAttendanceSummaryResponse>(res);
   },
+
+  exportAttendanceExcel: async (params?: {
+    sessionId?: string;
+    classroomId?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{ blob: Blob; filename: string }> => {
+    const token = localStorage.getItem('edusense_token');
+    const queryParams = new URLSearchParams();
+    if (params?.sessionId) queryParams.append('session_id', params.sessionId);
+    if (params?.classroomId) queryParams.append('classroom_id', params.classroomId);
+    if (params?.startDate) queryParams.append('start_date', params.startDate);
+    if (params?.endDate) queryParams.append('end_date', params.endDate);
+
+    const queryString = queryParams.toString();
+    const url = `${API_BASE_URL}/attendance/export${queryString ? `?${queryString}` : ''}`;
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    if (!res.ok) {
+      let errorMessage = 'Failed to export attendance report';
+      try {
+        const errorData = await res.json();
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        } else if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((e: any) => e.msg).join(', ');
+        }
+      } catch {
+        errorMessage = res.statusText || errorMessage;
+      }
+      throw new Error(errorMessage);
+    }
+
+    let filename = `EduSense_Present_Students_${new Date().toISOString().split('T')[0]}.xlsx`;
+    const disposition = res.headers.get('content-disposition');
+    if (disposition && disposition.includes('filename=')) {
+      const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+      if (match && match[1]) {
+        filename = match[1].replace(/['"]/g, '').trim();
+      }
+    }
+
+    const blob = await res.blob();
+    return { blob, filename };
+  },
+};
+
+export const triggerFileDownload = (blob: Blob, filename: string): void => {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
 };
 
 export const analyticsApi = {

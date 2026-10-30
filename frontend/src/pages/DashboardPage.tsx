@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { classroomApi, sessionApi, faceApi, attendanceApi } from '../services/api';
+import { classroomApi, sessionApi, faceApi, attendanceApi, triggerFileDownload } from '../services/api';
 import type { Classroom, ClassSession, EnrollmentStatusResponse, StudentAttendanceSummaryResponse, TeacherAttendanceSummaryResponse } from '../types';
 import { Sidebar } from '../components/Sidebar';
 import { TopHeader } from '../components/TopHeader';
@@ -11,7 +11,8 @@ import { FaceVerificationModal } from '../components/FaceVerificationModal';
 import { TeacherAttendanceModal } from '../components/TeacherAttendanceModal';
 import { AnalyticsDashboard } from '../components/AnalyticsDashboard';
 import { StudentPersonalAnalytics } from '../components/StudentPersonalAnalytics';
-
+import { TeacherAttendanceExportCard } from '../components/TeacherAttendanceExportCard';
+import { CourseEnrollmentModal } from '../components/CourseEnrollmentModal';
 
 import {
   Plus,
@@ -28,6 +29,10 @@ import {
   ShieldCheck,
   ChevronRight,
   Users,
+  FileSpreadsheet,
+  GraduationCap,
+  CheckCircle2,
+  SquareX,
 } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
@@ -50,11 +55,18 @@ export const DashboardPage: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [enrollmentClassroom, setEnrollmentClassroom] = useState<Classroom | null>(null);
+  const [showStudentJoinModal, setShowStudentJoinModal] = useState(false);
+  const [joinCourseCode, setJoinCourseCode] = useState('');
+  const [isJoiningCourse, setIsJoiningCourse] = useState(false);
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
   // Create Classroom Form
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newCourseCode, setNewCourseCode] = useState('');
+  const [newDepartment, setNewDepartment] = useState('');
+  const [newSemester, setNewSemester] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
   // Start Session Form
@@ -138,7 +150,7 @@ export const DashboardPage: React.FC = () => {
 
   const isTeacher = user?.role === 'TEACHER';
 
-  // Create Classroom submit
+  // Create Classroom / Course submit
   const handleCreateClassroom = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -147,16 +159,60 @@ export const DashboardPage: React.FC = () => {
         title: newTitle,
         description: newDescription || undefined,
         course_code: newCourseCode,
+        department: newDepartment || undefined,
+        semester: newSemester || undefined,
       });
       setShowCreateModal(false);
       setNewTitle('');
       setNewDescription('');
       setNewCourseCode('');
+      setNewDepartment('');
+      setNewSemester('');
+      setActionSuccessMsg('Course created successfully!');
       await fetchDashboardData();
+      setTimeout(() => setActionSuccessMsg(null), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to create classroom');
+      setError(err.message || 'Failed to create course');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  // Student join course using course code
+  const handleJoinCourseByCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!joinCourseCode.trim()) return;
+
+    try {
+      setIsJoiningCourse(true);
+      setError(null);
+      const joined = await classroomApi.joinCourse(joinCourseCode.trim());
+      setShowStudentJoinModal(false);
+      setJoinCourseCode('');
+      setActionSuccessMsg(`Successfully joined ${joined.title} (${joined.course_code})`);
+      await fetchDashboardData();
+      setTimeout(() => setActionSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setError(err.message || 'Failed to join course. Please verify course code.');
+    } finally {
+      setIsJoiningCourse(false);
+    }
+  };
+
+  // End active session with final attendance calculation
+  const handleEndSession = async (sessionId: string) => {
+    if (!confirm('Are you sure you want to end this class session? Attendance will be finalized and classified.')) return;
+
+    try {
+      setLoading(true);
+      await sessionApi.endSession(sessionId);
+      setActionSuccessMsg('Class session ended and attendance finalized.');
+      await fetchDashboardData();
+      setTimeout(() => setActionSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setError(err.message || 'Failed to end session');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -199,6 +255,13 @@ export const DashboardPage: React.FC = () => {
             </div>
           )}
 
+          {actionSuccessMsg && (
+            <div className="flex items-center gap-2 p-4 bg-emerald-950/50 border border-emerald-800/50 rounded-xl text-emerald-300 text-sm">
+              <ShieldCheck className="w-5 h-5 shrink-0" />
+              <span>{actionSuccessMsg}</span>
+            </div>
+          )}
+
           {activeTab === 'analytics' || activeTab === 'reports' ? (
             isTeacher ? (
               <AnalyticsDashboard
@@ -210,6 +273,47 @@ export const DashboardPage: React.FC = () => {
                 sessions={[...activeSessions, ...recentSessions]}
                 studentAttendance={studentAttendance}
               />
+            )
+          ) : activeTab === 'attendance' ? (
+            isTeacher ? (
+              <div className="space-y-6">
+                <TeacherAttendanceExportCard
+                  classrooms={classrooms}
+                  sessions={[...activeSessions, ...recentSessions, ...upcomingSessions]}
+                  teacherAttendance={teacherAttendance}
+                  onOpenSessionAttendance={(sessId) => setSelectedAttendanceSessionId(sessId)}
+                />
+              </div>
+            ) : (
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center space-y-4">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center mx-auto">
+                  <Users className="w-6 h-6" />
+                </div>
+                <h3 className="text-xl font-bold text-white">Student Attendance Records</h3>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  Attendance is recorded automatically via periodic ArcFace face verification during live class sessions.
+                </p>
+                {studentAttendance && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-xl mx-auto pt-4">
+                    <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                      <p className="text-[10px] text-slate-500 font-bold uppercase">Sessions</p>
+                      <p className="text-xl font-extrabold text-white">{studentAttendance.total_sessions}</p>
+                    </div>
+                    <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                      <p className="text-[10px] text-slate-500 font-bold uppercase">Present</p>
+                      <p className="text-xl font-extrabold text-emerald-400">{studentAttendance.present_count}</p>
+                    </div>
+                    <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                      <p className="text-[10px] text-slate-500 font-bold uppercase">Late</p>
+                      <p className="text-xl font-extrabold text-amber-400">{studentAttendance.late_count}</p>
+                    </div>
+                    <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                      <p className="text-[10px] text-slate-500 font-bold uppercase">Rate</p>
+                      <p className="text-xl font-extrabold text-indigo-400">{studentAttendance.attendance_percentage}%</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             )
           ) : (
             <>
@@ -275,15 +379,31 @@ export const DashboardPage: React.FC = () => {
                     <Calendar className="w-4 h-4 text-indigo-400" />
                     <span>Schedule</span>
                   </button>
+
+                  <button
+                    onClick={() => setActiveTab('attendance')}
+                    className="flex items-center gap-2 px-4 py-3 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-semibold text-xs rounded-xl transition-all border border-emerald-500/30 shadow-lg shadow-emerald-950/30"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                    <span>Export Attendance</span>
+                  </button>
                 </>
               ) : (
                 <>
+                  <button
+                    onClick={() => setShowStudentJoinModal(true)}
+                    className="flex items-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition-all shadow-lg shadow-indigo-600/20"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Join Course with Code</span>
+                  </button>
+
                   <button
                     onClick={() => setShowJoinModal(true)}
                     className="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs rounded-xl transition-all shadow-lg shadow-emerald-600/20"
                   >
                     <Play className="w-4 h-4" />
-                    <span>Join Class</span>
+                    <span>Join Class Session</span>
                   </button>
 
                   <button
@@ -297,6 +417,14 @@ export const DashboardPage: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* ACTION SUCCESS BANNER */}
+          {actionSuccessMsg && (
+            <div className="flex items-center gap-2 p-4 bg-emerald-950/70 border border-emerald-800 text-emerald-300 rounded-2xl text-xs font-semibold shadow-lg">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{actionSuccessMsg}</span>
+            </div>
+          )}
 
           {/* STUDENT FACE ENROLLMENT CARD */}
           {!isTeacher && (
@@ -381,6 +509,16 @@ export const DashboardPage: React.FC = () => {
             />
           </section>
 
+          {/* TEACHER ATTENDANCE EXPORT ENGINE */}
+          {isTeacher && (
+            <TeacherAttendanceExportCard
+              classrooms={classrooms}
+              sessions={[...activeSessions, ...recentSessions, ...upcomingSessions]}
+              teacherAttendance={teacherAttendance}
+              onOpenSessionAttendance={(sessId) => setSelectedAttendanceSessionId(sessId)}
+            />
+          )}
+
           {/* 5. LIVE NOW SECTION */}
           <section className="space-y-4">
             <div className="flex items-center justify-between">
@@ -423,13 +561,37 @@ export const DashboardPage: React.FC = () => {
                       <p className="text-xs text-slate-400">Classroom ID: {sess.classroom_id}</p>
                     </div>
 
-                    <button
-                      onClick={() => navigate(`/classroom/${sess.id}?classId=${sess.classroom_id}`)}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-xl flex items-center gap-1.5 shadow transition-all"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                      <span>Join Classroom</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {isTeacher && (
+                        <>
+                          <button
+                            onClick={() => setSelectedAttendanceSessionId(sess.id)}
+                            className="px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium text-xs rounded-xl flex items-center gap-1.5 transition-all"
+                            title="Monitor Live Attendance"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            <span>Attendance</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleEndSession(sess.id)}
+                            className="px-3 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-medium text-xs rounded-xl flex items-center gap-1.5 transition-all"
+                            title="End Class Session & Finalize Attendance"
+                          >
+                            <SquareX className="w-3.5 h-3.5 text-rose-400" />
+                            <span>End Session</span>
+                          </button>
+                        </>
+                      )}
+
+                      <button
+                        onClick={() => navigate(`/classroom/${sess.id}?classId=${sess.classroom_id}`)}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-xl flex items-center gap-1.5 shadow transition-all"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        <span>Join Classroom</span>
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -467,35 +629,66 @@ export const DashboardPage: React.FC = () => {
                   >
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 bg-indigo-950/60 px-2.5 py-1 rounded-md border border-indigo-800/40">
-                          {c.course_code}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 bg-indigo-950/60 px-2.5 py-1 rounded-md border border-indigo-800/40">
+                            {c.course_code}
+                          </span>
+                          {c.department && (
+                            <span className="text-[10px] font-medium text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/60">
+                              {c.department}
+                            </span>
+                          )}
+                          {c.semester && (
+                            <span className="text-[10px] font-medium text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/60">
+                              Sem {c.semester}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-xs text-slate-500 flex items-center gap-1">
                           <Calendar className="w-3.5 h-3.5" />
                           {new Date(c.created_at).toLocaleDateString()}
                         </span>
                       </div>
+
                       <h4 className="text-base font-bold text-white leading-snug">{c.title}</h4>
                       {c.description && (
                         <p className="text-xs text-slate-400 line-clamp-2">{c.description}</p>
                       )}
-                      {c.teacher_name && (
-                        <p className="text-xs text-slate-500">Instructor: {c.teacher_name}</p>
-                      )}
+
+                      <div className="flex items-center justify-between pt-1">
+                        {c.teacher_name && (
+                          <p className="text-xs text-slate-500">Instructor: {c.teacher_name}</p>
+                        )}
+                        <span className="flex items-center gap-1 text-[11px] text-indigo-300 font-medium bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-900/40">
+                          <Users className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>{c.enrolled_student_count ?? 0} Enrolled</span>
+                        </span>
+                      </div>
                     </div>
 
                     <div className="pt-4 border-t border-slate-800/80 flex items-center gap-2">
                       {isTeacher ? (
-                        <button
-                          onClick={() => {
-                            setSelectedClassroom(c);
-                            setSessionTitle(`${c.title} Live Class`);
-                          }}
-                          className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl text-xs transition-all shadow"
-                        >
-                          <Video className="w-4 h-4" />
-                          <span>Launch New Session</span>
-                        </button>
+                        <>
+                          <button
+                            onClick={() => setEnrollmentClassroom(c)}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-xl text-xs transition-all border border-slate-700"
+                            title="Manage Enrolled Students"
+                          >
+                            <Users className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Students ({c.enrolled_student_count ?? 0})</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setSelectedClassroom(c);
+                              setSessionTitle(`${c.title} Live Class`);
+                            }}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl text-xs transition-all shadow"
+                          >
+                            <Video className="w-3.5 h-3.5" />
+                            <span>Launch</span>
+                          </button>
+                        </>
                       ) : (
                         <button
                           onClick={() => {
@@ -629,13 +822,31 @@ export const DashboardPage: React.FC = () => {
 
                       <div className="flex items-center gap-2">
                         {isTeacher && (
-                          <button
-                            onClick={() => setSelectedAttendanceSessionId(sess.id)}
-                            className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
-                          >
-                            <Users className="w-3.5 h-3.5" />
-                            <span>View Attendance</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => setSelectedAttendanceSessionId(sess.id)}
+                              className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                            >
+                              <Users className="w-3.5 h-3.5" />
+                              <span>View Attendance</span>
+                            </button>
+
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const { blob, filename } = await attendanceApi.exportAttendanceExcel({ sessionId: sess.id });
+                                  triggerFileDownload(blob, filename);
+                                } catch (err: any) {
+                                  alert(`Export failed: ${err.message || 'Error'}`);
+                                }
+                              }}
+                              className="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                              title="Export session attendance to Excel (.xlsx)"
+                            >
+                              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Export</span>
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() => alert(`Session Details:\nTitle: ${sess.title}\nCourse: ${sess.course_code || 'N/A'}\nStatus: ${sess.status}\nEnded At: ${sess.actual_end_time || sess.created_at}`)}
@@ -693,10 +904,37 @@ export const DashboardPage: React.FC = () => {
                   type="text"
                   required
                   value={newCourseCode}
-                  onChange={(e) => setNewCourseCode(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
+                  onChange={(e) => setNewCourseCode(e.target.value.toUpperCase())}
+                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs uppercase tracking-wider focus:outline-none focus:border-indigo-500"
                   placeholder="CS-502"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    Department
+                  </label>
+                  <input
+                    type="text"
+                    value={newDepartment}
+                    onChange={(e) => setNewDepartment(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
+                    placeholder="Computer Science"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    Semester
+                  </label>
+                  <input
+                    type="text"
+                    value={newSemester}
+                    onChange={(e) => setNewSemester(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
+                    placeholder="6"
+                  />
+                </div>
               </div>
 
               <div>
@@ -817,6 +1055,74 @@ export const DashboardPage: React.FC = () => {
           onClose={() => setSelectedAttendanceSessionId(null)}
           sessionId={selectedAttendanceSessionId}
         />
+      )}
+
+      {/* MODAL: COURSE ENROLLMENT (TEACHER) */}
+      {enrollmentClassroom && (
+        <CourseEnrollmentModal
+          isOpen={!!enrollmentClassroom}
+          onClose={() => {
+            setEnrollmentClassroom(null);
+            fetchDashboardData();
+          }}
+          classroom={enrollmentClassroom}
+        />
+      )}
+
+      {/* MODAL: JOIN COURSE WITH CODE (STUDENT) */}
+      {showStudentJoinModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 space-y-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-indigo-400" />
+                <span>Join Course with Code</span>
+              </h3>
+              <button
+                onClick={() => setShowStudentJoinModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleJoinCourseByCode} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                  Course Code
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={joinCourseCode}
+                  onChange={(e) => setJoinCourseCode(e.target.value.toUpperCase())}
+                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs uppercase tracking-wider focus:outline-none focus:border-indigo-500"
+                  placeholder="e.g. CS-502"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Enter the course code provided by your instructor (e.g., CS-502) to enroll.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowStudentJoinModal(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isJoiningCourse}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl flex items-center gap-2"
+                >
+                  {isJoiningCourse ? 'Joining...' : 'Join Course'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

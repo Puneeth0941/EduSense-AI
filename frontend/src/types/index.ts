@@ -37,11 +37,39 @@ export interface Classroom {
   title: string;
   description?: string;
   course_code: string;
+  department?: string;
+  semester?: string;
   teacher_id: string;
   teacher_name?: string;
   livekit_room_name: string;
   is_active: boolean;
   created_at: string;
+  enrolled_student_count?: number;
+  is_enrolled?: boolean;
+}
+
+export interface EnrolledStudent {
+  enrollment_id: string;
+  student_id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+  student_id_number: string;
+  department?: string;
+  enrollment_year?: number;
+  enrolled_at: string;
+  has_face_enrolled: boolean;
+}
+
+export interface RegisteredStudent {
+  student_id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+  student_id_number: string;
+  department?: string;
+  enrollment_year?: number;
+  has_face_enrolled: boolean;
 }
 
 export interface ClassSession {
@@ -135,12 +163,16 @@ export interface AttendanceRecordResponse {
   student_id: string;
   student_name: string;
   student_id_number: string;
-  status: 'PRESENT' | 'LATE' | 'UNVERIFIED' | 'ABSENT';
+  status: 'PRESENT' | 'PARTIAL' | 'LATE' | 'UNVERIFIED' | 'ABSENT';
   marked_at: string;
   first_verified_at?: string | null;
   last_verified_at?: string | null;
   verification_count: number;
   presence_duration_seconds: number;
+  missing_duration_seconds?: number;
+  attendance_percentage?: number;
+  verification_state?: string;
+  last_detected_at?: string | null;
   is_manually_corrected: boolean;
   corrected_by_name?: string | null;
   correction_reason?: string | null;
@@ -152,6 +184,7 @@ export interface SessionAttendanceSummaryResponse {
   classroom_title: string;
   total_students: number;
   present_count: number;
+  partial_count?: number;
   late_count: number;
   unverified_count: number;
   absent_count: number;

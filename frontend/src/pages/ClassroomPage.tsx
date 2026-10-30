@@ -165,7 +165,7 @@ export const ClassroomPage: React.FC = () => {
   return (
     <LiveKitRoom
       token={joinData.token}
-      serverUrl={joinData.server_url}
+      serverUrl={joinData.server_url || import.meta.env.VITE_LIVEKIT_URL || 'wss://edusense-t2vkr0dy.livekit.cloud'}
       connect={true}
       audio={true}
       video={true}
@@ -311,8 +311,8 @@ const ClassroomInner: React.FC<ClassroomInnerProps> = ({ joinData, classroom, se
 
     // Initial check after 2s
     const timeout = setTimeout(captureAndVerifyFrame, 2000);
-    // Periodic interval every 10s
-    const interval = setInterval(captureAndVerifyFrame, 10000);
+    // Periodic interval every 1 minute (60,000ms) as confirmed in requirements
+    const interval = setInterval(captureAndVerifyFrame, 60000);
 
     return () => {
       clearTimeout(timeout);

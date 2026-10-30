@@ -4,7 +4,7 @@ from typing import List
 from sqlalchemy import select, or_, and_, not_
 from sqlalchemy.orm import Session, joinedload
 
-from app.models.classroom import Classroom
+from app.models.classroom import Classroom, CourseEnrollment
 from app.models.session import ClassSession, SessionParticipant
 from app.models.profile import TeacherProfile, StudentProfile
 from app.models.stubs import AttendanceRecord
@@ -62,6 +62,15 @@ def get_authorized_classrooms(db: Session, user: User) -> List[Classroom]:
     # 3. Department matching (institutional teachers in student's department)
     if dept:
         conds.append(Classroom.teacher.has(TeacherProfile.department.ilike(dept)))
+
+    # 4. Enrolled in course
+    if student_profile:
+        conds.append(
+            Classroom.id.in_(
+                select(CourseEnrollment.classroom_id)
+                .where(CourseEnrollment.student_id == student_profile.id)
+            )
+        )
 
     if not conds:
         return []

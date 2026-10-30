@@ -63,6 +63,11 @@ class AttendanceRecord(Base):
     )
     verification_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     presence_duration_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    missing_duration_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attendance_percentage: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
+    verification_state: Mapped[Optional[str]] = mapped_column(String(50), default="PRESENT", nullable=True)
+    last_detected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_missing_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_manually_corrected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     corrected_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
@@ -75,6 +80,35 @@ class AttendanceRecord(Base):
     session: Mapped["ClassSession"] = relationship("ClassSession")
     student: Mapped["StudentProfile"] = relationship("StudentProfile")
     corrected_by: Mapped[Optional["User"]] = relationship("User")
+
+
+class AttendanceEvent(Base):
+    __tablename__ = "attendance_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("class_sessions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("student_profiles.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    session: Mapped["ClassSession"] = relationship("ClassSession")
+    student: Mapped["StudentProfile"] = relationship("StudentProfile")
 
 
 class FacialAnalysis(Base):

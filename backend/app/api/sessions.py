@@ -7,9 +7,11 @@ from sqlalchemy import select
 
 from app.core.deps import get_db, get_current_user, require_role
 from app.models.user import User
-from app.models.classroom import Classroom
+from app.models.classroom import Classroom, CourseEnrollment
 from app.models.session import ClassSession, SessionParticipant
-from app.models.enums import SessionStatus, UserRole
+from app.models.enums import SessionStatus, UserRole, AttendanceStatus, AttendanceEventType
+from app.models.stubs import AttendanceRecord, AttendanceEvent
+from app.models.profile import StudentProfile
 from app.schemas.session import (
     ClassSessionCreateSchema,
     ClassSessionResponseSchema,
@@ -122,17 +124,81 @@ def end_session(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the classroom teacher owner can end this session.")
     
     session.status = SessionStatus.COMPLETED
-    session.actual_end_time = datetime.now(timezone.utc)
-    
+    now_utc = datetime.now(timezone.utc)
+    session.actual_end_time = now_utc
+
+    # Ensure actual_start_time is set and timezone-aware
+    if not session.actual_start_time:
+        session.actual_start_time = session.scheduled_start_time or session.created_at
+    if session.actual_start_time and session.actual_start_time.tzinfo is None:
+        session.actual_start_time = session.actual_start_time.replace(tzinfo=timezone.utc)
+
+    # Total class duration in seconds
+    total_class_duration_seconds = max((session.actual_end_time - session.actual_start_time).total_seconds(), 60.0)
+
     # Mark all active participants as left
     db.query(SessionParticipant).filter(
         SessionParticipant.session_id == session_id,
         SessionParticipant.left_at.is_(None)
-    ).update({"left_at": datetime.now(timezone.utc)}, synchronize_session=False)
-    
+    ).update({"left_at": now_utc}, synchronize_session=False)
+
+    # Full enrolled-student reconciliation
+    PRESENT_THRESHOLD = 75.0  # Configurable threshold: 75% for Present
+
+    # 1. Fetch all students enrolled in the classroom
+    enrollments = db.scalars(
+        select(CourseEnrollment).where(CourseEnrollment.classroom_id == session.classroom_id)
+    ).all()
+    enrolled_student_ids = {e.student_id for e in enrollments}
+
+    # 2. Fetch verified attendance records for this session
+    existing_records = db.scalars(
+        select(AttendanceRecord).where(AttendanceRecord.session_id == session_id)
+    ).all()
+    record_map = {r.student_id: r for r in existing_records}
+
+    # 3. Combine enrolled students and any session participants
+    all_student_ids = enrolled_student_ids.union(record_map.keys())
+
+    for s_id in all_student_ids:
+        if s_id in record_map:
+            rec = record_map[s_id]
+            presence_secs = rec.presence_duration_seconds or 0
+            pct = min(100.0, round((presence_secs / total_class_duration_seconds) * 100.0, 2))
+            rec.attendance_percentage = pct
+            rec.missing_duration_seconds = max(0, int(total_class_duration_seconds - presence_secs))
+
+            if not rec.is_manually_corrected:
+                if pct >= PRESENT_THRESHOLD:
+                    rec.status = AttendanceStatus.PRESENT
+                    rec.verification_state = "Present"
+                elif pct > 0.0:
+                    rec.status = AttendanceStatus.PARTIAL
+                    rec.verification_state = "Partial Attendance"
+                else:
+                    rec.status = AttendanceStatus.ABSENT
+                    rec.verification_state = "Absent"
+        else:
+            # Enrolled student who never joined or was never detected -> Mark ABSENT
+            absent_rec = AttendanceRecord(
+                session_id=session_id,
+                student_id=s_id,
+                status=AttendanceStatus.ABSENT,
+                marked_at=now_utc,
+                first_verified_at=None,
+                last_verified_at=None,
+                verification_count=0,
+                presence_duration_seconds=0,
+                missing_duration_seconds=int(total_class_duration_seconds),
+                attendance_percentage=0.0,
+                verification_state="Absent",
+                is_manually_corrected=False,
+            )
+            db.add(absent_rec)
+
     db.commit()
     db.refresh(session)
-    
+
     res = ClassSessionResponseSchema.model_validate(session)
     res.livekit_room_name = f"edusense_{session.id}"
     return res

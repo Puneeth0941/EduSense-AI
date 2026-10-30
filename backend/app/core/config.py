@@ -39,6 +39,10 @@ class Settings(BaseSettings):
         "http://localhost:5176",
         "http://127.0.0.1:5176",
     ]
+    FRONTEND_URL: Union[str, None] = None
+    ALLOWED_ORIGIN_REGEX: str = (
+        r"^https?://([a-zA-Z0-9\-]+\.)*(ngrok-free\.app|ngrok\.app|ngrok-free\.dev|localhost|127\.0\.0\.1)(:\d+)?$"
+    )
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
