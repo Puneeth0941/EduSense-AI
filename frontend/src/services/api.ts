@@ -19,6 +19,11 @@ import type {
   SentimentAnalysisResult,
   EnrolledStudent,
   RegisteredStudent,
+  SessionAnalyticsOverview,
+  FacialWindowAnalytics,
+  StudentFacialWindowAnalytics,
+  SessionFacialSummary,
+  StudentEngagementSummary,
 } from '../types';
 
 const resolveApiBaseUrl = (): string => {
@@ -493,39 +498,55 @@ export const analyticsApi = {
     return handleResponse<any>(res);
   },
 
-  getStudentEngagement: async (sessionId: string, studentId: string): Promise<any> => {
+  getStudentEngagement: async (sessionId: string, studentId: string): Promise<StudentEngagementSummary> => {
     const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/student/${studentId}`, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<any>(res);
+    return handleResponse<StudentEngagementSummary>(res);
   },
 
-  getSessionOverview: async (sessionId: string): Promise<any> => {
+  getSessionOverview: async (sessionId: string): Promise<SessionAnalyticsOverview> => {
     const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/overview`, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<any>(res);
+    return handleResponse<SessionAnalyticsOverview>(res);
   },
 
-  getClassroomFacialWindow: async (sessionId: string): Promise<any> => {
-    const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/facial-window`, {
+  getClassroomFacialWindow: async (sessionId: string, windowTime?: string): Promise<FacialWindowAnalytics> => {
+    const url = windowTime
+      ? `${API_BASE_URL}/analytics/session/${sessionId}/facial-window?window_time=${encodeURIComponent(windowTime)}`
+      : `${API_BASE_URL}/analytics/session/${sessionId}/facial-window`;
+    const res = await fetch(url, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<any>(res);
+    return handleResponse<FacialWindowAnalytics>(res);
   },
 
-  getStudentFacialWindow: async (sessionId: string, studentId: string): Promise<any> => {
-    const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/student/${studentId}/facial-window`, {
+  getFacialWindowAnalytics: async (sessionId: string, windowTime?: string): Promise<FacialWindowAnalytics> => {
+    const url = windowTime
+      ? `${API_BASE_URL}/analytics/session/${sessionId}/facial-window?window_time=${encodeURIComponent(windowTime)}`
+      : `${API_BASE_URL}/analytics/session/${sessionId}/facial-window`;
+    const res = await fetch(url, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<any>(res);
+    return handleResponse<FacialWindowAnalytics>(res);
   },
 
-  getSessionFacialSummary: async (sessionId: string): Promise<any> => {
+  getStudentFacialWindow: async (sessionId: string, studentId: string, windowTime?: string): Promise<StudentFacialWindowAnalytics> => {
+    const url = windowTime
+      ? `${API_BASE_URL}/analytics/session/${sessionId}/student/${studentId}/facial-window?window_time=${encodeURIComponent(windowTime)}`
+      : `${API_BASE_URL}/analytics/session/${sessionId}/student/${studentId}/facial-window`;
+    const res = await fetch(url, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<StudentFacialWindowAnalytics>(res);
+  },
+
+  getSessionFacialSummary: async (sessionId: string): Promise<SessionFacialSummary> => {
     const res = await fetch(`${API_BASE_URL}/analytics/session/${sessionId}/facial-summary`, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<any>(res);
+    return handleResponse<SessionFacialSummary>(res);
   },
 };
 

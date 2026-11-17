@@ -59,25 +59,25 @@ export const RegisterPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 py-8 font-sans text-slate-100">
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-8 space-y-6">
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col justify-center items-center px-4 py-12 font-sans text-slate-900">
+      <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow p-8 space-y-6">
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-indigo-600/20 text-indigo-400 mb-2 border border-indigo-500/30">
-            <GraduationCap className="w-7 h-7" />
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-blue-50 text-blue-600 mb-2 border border-blue-100">
+            <GraduationCap className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Create EduSense Account</h1>
-          <p className="text-sm text-slate-400">Join EduSense AI Classroom Platform</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Create EduSense Account</h1>
+          <p className="text-sm text-slate-500">Join the smart AI classroom platform</p>
         </div>
 
         {/* Role Selection Tabs */}
-        <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+        <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-100 rounded-xl border border-slate-200">
           <button
             type="button"
             onClick={() => setRole('STUDENT')}
-            className={`flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all ${
               role === 'STUDENT'
-                ? 'bg-indigo-600 text-white shadow'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <BookOpen className="w-4 h-4" />
@@ -87,10 +87,10 @@ export const RegisterPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setRole('TEACHER')}
-            className={`flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all ${
               role === 'TEACHER'
-                ? 'bg-indigo-600 text-white shadow'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <UserCheck className="w-4 h-4" />
@@ -99,15 +99,15 @@ export const RegisterPage: React.FC = () => {
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 p-3 bg-red-950/50 border border-red-800/50 rounded-xl text-red-300 text-sm">
-            <AlertCircle className="w-4 h-4 shrink-0" />
+          <div className="flex items-center gap-2.5 p-3.5 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
             <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
               Full Name
             </label>
             <input
@@ -115,13 +115,13 @@ export const RegisterPage: React.FC = () => {
               required
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
               placeholder={role === 'TEACHER' ? 'Prof. Sarah Jenkins' : 'Alex Johnson'}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
               Email Address
             </label>
             <input
@@ -129,13 +129,13 @@ export const RegisterPage: React.FC = () => {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
               placeholder="user@university.edu"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
               Password
             </label>
             <input
@@ -144,20 +144,20 @@ export const RegisterPage: React.FC = () => {
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
               placeholder="••••••••"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
               Department
             </label>
             <input
               type="text"
               value={department}
               onChange={(e) => setDepartment(e.target.value)}
-              className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
               placeholder="Computer Science & Engineering"
             />
           </div>
@@ -165,7 +165,7 @@ export const RegisterPage: React.FC = () => {
           {role === 'TEACHER' ? (
             <>
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
                   Employee ID
                 </label>
                 <input
@@ -173,20 +173,20 @@ export const RegisterPage: React.FC = () => {
                   required
                   value={employeeId}
                   onChange={(e) => setEmployeeId(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
                   placeholder="EMP-10294"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
                   Designation
                 </label>
                 <input
                   type="text"
                   value={designation}
                   onChange={(e) => setDesignation(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
                   placeholder="Associate Professor"
                 />
               </div>
@@ -194,7 +194,7 @@ export const RegisterPage: React.FC = () => {
           ) : (
             <>
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
                   Student ID Number
                 </label>
                 <input
@@ -202,20 +202,20 @@ export const RegisterPage: React.FC = () => {
                   required
                   value={studentIdNumber}
                   onChange={(e) => setStudentIdNumber(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
                   placeholder="STU-2026-881"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
                   Enrollment Year
                 </label>
                 <input
                   type="number"
                   value={enrollmentYear}
                   onChange={(e) => setEnrollmentYear(Number(e.target.value))}
-                  className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-sm transition-all"
                   placeholder="2026"
                 />
               </div>
@@ -225,16 +225,16 @@ export const RegisterPage: React.FC = () => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full mt-4 flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white font-medium rounded-xl transition-all shadow-lg shadow-indigo-600/20"
+            className="w-full mt-2 flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition-all"
           >
             <UserPlus className="w-4 h-4" />
             <span>{isSubmitting ? 'Registering...' : `Register as ${role === 'TEACHER' ? 'Teacher' : 'Student'}`}</span>
           </button>
         </form>
 
-        <div className="pt-4 border-t border-slate-800/80 text-center text-sm text-slate-400">
+        <div className="pt-4 border-t border-slate-100 text-center text-sm text-slate-500">
           Already have an account?{' '}
-          <Link to="/login" className="text-indigo-400 hover:text-indigo-300 font-medium hover:underline">
+          <Link to="/login" className="text-blue-600 hover:text-blue-700 font-semibold hover:underline">
             Sign in
           </Link>
         </div>

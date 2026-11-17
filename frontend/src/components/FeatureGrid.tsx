@@ -12,54 +12,21 @@ const MODULES = [
 
 export const FeatureGrid: React.FC = () => {
   return (
-    <div>
-      <h3 style={styles.gridHeading}>Phase 1 Architectural Feature Modules</h3>
-      <div style={styles.grid}>
+    <div className="space-y-4">
+      <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+        Phase 1 Architectural Feature Modules
+      </h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {MODULES.map((mod, i) => (
-          <div key={i} style={styles.moduleCard}>
-            <div style={styles.moduleName}>{mod.name}</div>
-            <div style={styles.moduleFeature}>{mod.feature}</div>
-            <div style={styles.statusTag}>{mod.status}</div>
+          <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-2">
+            <div className="text-xs font-bold text-slate-900">{mod.name}</div>
+            <div className="text-[11px] font-mono text-slate-500">{mod.feature}</div>
+            <div className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full inline-block border border-blue-100">
+              {mod.status}
+            </div>
           </div>
         ))}
       </div>
     </div>
   );
-};
-
-const styles: { [key: string]: React.CSSProperties } = {
-  gridHeading: {
-    color: '#cbd5e1',
-    fontSize: '1.1rem',
-    marginBottom: '1rem',
-  },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-    gap: '1rem',
-  },
-  moduleCard: {
-    backgroundColor: '#0f172a',
-    border: '1px solid #1e293b',
-    borderRadius: '6px',
-    padding: '1rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.5rem',
-  },
-  moduleName: {
-    color: '#f1f5f9',
-    fontWeight: '600',
-    fontSize: '0.95rem',
-  },
-  moduleFeature: {
-    color: '#64748b',
-    fontSize: '0.8rem',
-    fontFamily: 'monospace',
-  },
-  statusTag: {
-    color: '#38bdf8',
-    fontSize: '0.75rem',
-    fontWeight: '600',
-  },
 };

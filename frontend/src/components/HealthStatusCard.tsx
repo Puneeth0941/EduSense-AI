@@ -1,5 +1,6 @@
 import React from 'react';
 import type { HealthResponse } from '../types/api';
+import { Activity, RefreshCw } from 'lucide-react';
 
 interface HealthStatusCardProps {
   health: HealthResponse | null;
@@ -11,86 +12,46 @@ export const HealthStatusCard: React.FC<HealthStatusCardProps> = ({ health, load
   const isHealthy = health?.status === 'healthy';
 
   return (
-    <div style={styles.card}>
-      <div style={styles.cardHeader}>
-        <h2 style={styles.cardTitle}>Backend Connection Status</h2>
-        <button onClick={onRefresh} style={styles.refreshButton} disabled={loading}>
-          {loading ? 'Checking...' : 'Refresh Status'}
+    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-4 font-sans text-slate-800">
+      <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+        <div className="flex items-center gap-2">
+          <Activity className="w-5 h-5 text-blue-600" />
+          <h2 className="text-base font-bold text-slate-900">Backend Connection Status</h2>
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
+          <span>{loading ? 'Checking...' : 'Refresh Status'}</span>
         </button>
       </div>
 
-      <div style={styles.statusRow}>
-        <span style={styles.label}>API Health Endpoint:</span>
-        <span style={{ ...styles.badge, backgroundColor: isHealthy ? '#16a34a' : '#dc2626' }}>
-          {loading ? 'CHECKING...' : (health?.status?.toUpperCase() || 'UNREACHABLE')}
-        </span>
-      </div>
+      <div className="space-y-3 text-xs">
+        <div className="flex justify-between items-center py-1">
+          <span className="text-slate-500 font-medium">API Health Endpoint:</span>
+          <span className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[10px] border ${
+            isHealthy
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : 'bg-red-50 text-red-700 border-red-200'
+          }`}>
+            {loading ? 'CHECKING...' : (health?.status?.toUpperCase() || 'UNREACHABLE')}
+          </span>
+        </div>
 
-      <div style={styles.statusRow}>
-        <span style={styles.label}>Backend Service:</span>
-        <span style={styles.value}>{health?.service || 'EduSense AI API'}</span>
-      </div>
+        <div className="flex justify-between items-center py-1">
+          <span className="text-slate-500 font-medium">Backend Service:</span>
+          <span className="font-semibold text-slate-800">{health?.service || 'EduSense AI API'}</span>
+        </div>
 
-      <div style={styles.statusRow}>
-        <span style={styles.label}>PostgreSQL Database:</span>
-        <span style={{ ...styles.value, color: health?.database === 'connected' ? '#4ade80' : '#f87171' }}>
-          {health?.database || 'Disconnected'}
-        </span>
+        <div className="flex justify-between items-center py-1">
+          <span className="text-slate-500 font-medium">PostgreSQL Database:</span>
+          <span className={`font-semibold ${health?.database === 'connected' ? 'text-emerald-600' : 'text-red-500'}`}>
+            {health?.database || 'Disconnected'}
+          </span>
+        </div>
       </div>
     </div>
   );
-};
-
-const styles: { [key: string]: React.CSSProperties } = {
-  card: {
-    backgroundColor: '#0f172a',
-    border: '1px solid #334155',
-    borderRadius: '8px',
-    padding: '1.5rem',
-    marginBottom: '2rem',
-    color: '#f8fafc',
-  },
-  cardHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '1.25rem',
-    borderBottom: '1px solid #1e293b',
-    paddingBottom: '0.75rem',
-  },
-  cardTitle: {
-    margin: 0,
-    fontSize: '1.15rem',
-    color: '#e2e8f0',
-  },
-  refreshButton: {
-    backgroundColor: '#334155',
-    color: '#f8fafc',
-    border: 'none',
-    padding: '0.5rem 1rem',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '0.85rem',
-  },
-  statusRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '0.5rem 0',
-  },
-  label: {
-    color: '#94a3b8',
-    fontSize: '0.95rem',
-  },
-  value: {
-    fontWeight: '600',
-    fontSize: '0.95rem',
-  },
-  badge: {
-    color: '#ffffff',
-    padding: '0.25rem 0.6rem',
-    borderRadius: '4px',
-    fontSize: '0.75rem',
-    fontWeight: '700',
-  },
 };

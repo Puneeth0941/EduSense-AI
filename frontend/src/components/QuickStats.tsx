@@ -40,8 +40,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
       value: classrooms.length.toString(),
       subtext: 'Created by you',
       icon: BookOpen,
-      color: 'text-indigo-400',
-      bgColor: 'bg-indigo-600/10 border-indigo-500/20',
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50 border-blue-100',
     });
 
     // 2. Active Live Sessions
@@ -51,8 +51,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
       value: activeSessions.length.toString(),
       subtext: 'Active class sessions',
       icon: Video,
-      color: 'text-emerald-400',
-      bgColor: 'bg-emerald-600/10 border-emerald-500/20',
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50 border-emerald-100',
     });
 
     // 3. Completed Sessions (from real teacher attendance summary)
@@ -63,8 +63,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
         value: teacherAttendance.total_sessions_conducted.toString(),
         subtext: 'Completed class sessions',
         icon: Calendar,
-        color: 'text-cyan-400',
-        bgColor: 'bg-cyan-600/10 border-cyan-500/20',
+        color: 'text-indigo-600',
+        bgColor: 'bg-indigo-50 border-indigo-100',
       });
     }
 
@@ -76,8 +76,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
         value: `${teacherAttendance.overall_attendance_rate}%`,
         subtext: 'Average student presence',
         icon: Users,
-        color: 'text-violet-400',
-        bgColor: 'bg-violet-600/10 border-violet-500/20',
+        color: 'text-violet-600',
+        bgColor: 'bg-violet-50 border-violet-100',
       });
     }
   } else {
@@ -89,8 +89,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
       value: classrooms.length.toString(),
       subtext: 'Active course offerings',
       icon: BookOpen,
-      color: 'text-indigo-400',
-      bgColor: 'bg-indigo-600/10 border-indigo-500/20',
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50 border-blue-100',
     });
 
     // 2. Live Sessions
@@ -100,8 +100,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
       value: activeSessions.length.toString(),
       subtext: 'Ongoing live classes',
       icon: Video,
-      color: 'text-emerald-400',
-      bgColor: 'bg-emerald-600/10 border-emerald-500/20',
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50 border-emerald-100',
     });
 
     // 3 & 4. Real Student Attendance Metrics (only when reliable data exists)
@@ -112,8 +112,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
         value: `${studentAttendance.attendance_percentage}%`,
         subtext: `${studentAttendance.present_count} present, ${studentAttendance.late_count} late`,
         icon: Users,
-        color: 'text-emerald-400',
-        bgColor: 'bg-emerald-600/10 border-emerald-500/20',
+        color: 'text-emerald-600',
+        bgColor: 'bg-emerald-50 border-emerald-100',
       });
 
       stats.push({
@@ -122,8 +122,8 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
         value: `${studentAttendance.present_count + studentAttendance.late_count} / ${studentAttendance.total_sessions}`,
         subtext: 'Verified attendance',
         icon: BarChart,
-        color: 'text-cyan-400',
-        bgColor: 'bg-cyan-600/10 border-cyan-500/20',
+        color: 'text-indigo-600',
+        bgColor: 'bg-indigo-50 border-indigo-100',
       });
     }
   }
@@ -135,14 +135,14 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
         return (
           <div
             key={s.id}
-            className="p-5 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between shadow-lg"
+            className="p-5 bg-white border border-slate-200/90 rounded-xl flex items-center justify-between shadow-xs hover:border-slate-300 hover:shadow-sm transition-all"
           >
             <div className="space-y-1">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 {s.label}
               </span>
-              <div className="text-2xl font-bold text-white tracking-tight">{s.value}</div>
-              <p className="text-[11px] text-slate-500">{s.subtext}</p>
+              <div className="text-2xl font-bold text-slate-900 tracking-tight">{s.value}</div>
+              <p className="text-[12px] text-slate-500 font-normal">{s.subtext}</p>
             </div>
 
             <div className={`p-3 rounded-xl border ${s.bgColor} ${s.color}`}>
@@ -154,4 +154,3 @@ export const QuickStats: React.FC<QuickStatsProps> = ({
     </div>
   );
 };
-

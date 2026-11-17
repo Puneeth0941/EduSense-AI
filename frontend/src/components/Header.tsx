@@ -1,48 +1,21 @@
 import React from 'react';
+import { GraduationCap } from 'lucide-react';
 
 export const Header: React.FC = () => {
   return (
-    <header style={styles.header}>
-      <div style={styles.titleGroup}>
-        <h1 style={styles.title}>EduSense AI</h1>
-        <span style={styles.subtitle}>Smart Classroom Attendance & Student Engagement Analytics</span>
+    <header className="flex justify-between items-center px-6 py-4 bg-white border-b border-slate-200 text-slate-900 shadow-xs">
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+          <GraduationCap className="w-5 h-5" />
+        </div>
+        <div>
+          <h1 className="text-base font-bold text-slate-900 leading-tight">EduSense AI</h1>
+          <span className="text-xs text-slate-500">Smart Classroom Attendance & Student Engagement Analytics</span>
+        </div>
       </div>
-      <div style={styles.phaseBadge}>Phase 1: Foundation & Architecture</div>
+      <div className="bg-blue-50 text-blue-700 text-xs font-semibold px-3 py-1 rounded-full border border-blue-100">
+        Phase 1: Foundation & Architecture
+      </div>
     </header>
   );
-};
-
-const styles: { [key: string]: React.CSSProperties } = {
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '1.5rem 2rem',
-    backgroundColor: '#1e293b',
-    borderBottom: '1px solid #334155',
-    color: '#f8fafc',
-  },
-  titleGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.25rem',
-  },
-  title: {
-    margin: 0,
-    fontSize: '1.5rem',
-    fontWeight: '700',
-    color: '#38bdf8',
-  },
-  subtitle: {
-    fontSize: '0.875rem',
-    color: '#94a3b8',
-  },
-  phaseBadge: {
-    backgroundColor: '#0284c7',
-    color: '#ffffff',
-    padding: '0.4rem 0.8rem',
-    borderRadius: '6px',
-    fontSize: '0.8rem',
-    fontWeight: '600',
-  },
 };

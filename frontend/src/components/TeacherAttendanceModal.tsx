@@ -113,7 +113,7 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
     const val = (state || status || 'PRESENT').toUpperCase();
     if (val.includes('TEMPORARILY') || val === 'TEMPORARILY_NOT_DETECTED') {
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800/50">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
           <Clock className="w-3 h-3" />
           <span>Temporarily Not Detected</span>
         </span>
@@ -121,15 +121,15 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
     }
     if (val.includes('REQUIRED') || val.includes('MISSING_CONFIRMED')) {
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800/50">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">
           <AlertCircle className="w-3 h-3" />
-          <span>Identity Verification Required</span>
+          <span>Verification Required</span>
         </span>
       );
     }
     if (val === 'PARTIAL' || val.includes('PARTIAL')) {
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800/50">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
           <Activity className="w-3 h-3" />
           <span>Partial Attendance</span>
         </span>
@@ -137,14 +137,14 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
     }
     if (val === 'ABSENT') {
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-950 text-red-300 border border-red-800/50">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">
           <XCircle className="w-3 h-3" />
           <span>Absent</span>
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800/50">
+      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
         <CheckCircle2 className="w-3 h-3" />
         <span>Present</span>
       </span>
@@ -152,77 +152,76 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-      <div className="relative w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+      <div className="relative w-full max-w-5xl bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* MODAL HEADER */}
-        <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 shrink-0">
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-indigo-400">
-              <Users className="w-6 h-6" />
+            <div className="p-2.5 bg-blue-50 border border-blue-100 rounded-xl text-blue-600">
+              <Users className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">
-                Classroom Attendance & Verification Dashboard
+              <h3 className="text-base font-bold text-slate-900">
+                Classroom Attendance & Verification Roster
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 {summary ? `${summary.classroom_title} — ${summary.session_title}` : 'Real-time Time-Based Attendance'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={handleExportToExcel}
               disabled={isExporting || loading}
-              title="Export 3-section attendance report to Excel (.xlsx)"
-              className="px-3.5 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl transition-all text-xs font-semibold flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+              title="Export attendance report to Excel (.xlsx)"
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs disabled:opacity-50"
             >
               {isExporting ? (
-                <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
               ) : (
-                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
               )}
-              <span>{isExporting ? 'Exporting...' : 'Export Attendance to Excel'}</span>
+              <span>{isExporting ? 'Exporting...' : 'Export to Excel'}</span>
             </button>
 
             <button
               onClick={fetchAttendance}
               disabled={loading}
-              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition-all text-xs font-semibold flex items-center gap-1.5"
+              className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 transition-colors text-xs font-semibold flex items-center gap-1"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
-              <span>Refresh</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
             </button>
 
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl border border-slate-700"
+              className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
         {/* EXPORT FEEDBACK ALERTS */}
         {exportError && (
-          <div className="mx-6 mt-4 p-3.5 bg-red-950/60 border border-red-800/80 rounded-xl text-red-300 text-xs flex items-center justify-between gap-2">
+          <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
               <span>{exportError}</span>
             </div>
-            <button onClick={() => setExportError(null)} className="text-red-400 hover:text-white text-xs font-bold">
+            <button onClick={() => setExportError(null)} className="text-red-700 hover:text-red-900 text-xs font-bold">
               <X className="w-4 h-4" />
             </button>
           </div>
         )}
 
         {exportSuccess && (
-          <div className="mx-6 mt-4 p-3.5 bg-emerald-950/60 border border-emerald-800/80 rounded-xl text-emerald-300 text-xs flex items-center justify-between gap-2">
+          <div className="mx-6 mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>{exportSuccess}</span>
             </div>
-            <button onClick={() => setExportSuccess(null)} className="text-emerald-400 hover:text-white text-xs font-bold">
+            <button onClick={() => setExportSuccess(null)} className="text-emerald-700 hover:text-emerald-900 text-xs font-bold">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -230,84 +229,84 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
 
         {/* SUMMARY STATS BAR */}
         {summary && (
-          <div className="p-6 bg-slate-950/60 border-b border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-4 shrink-0">
-            <div className="p-3 bg-slate-900 border border-emerald-500/30 rounded-2xl flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
-                <CheckCircle2 className="w-5 h-5" />
+          <div className="p-4 bg-slate-50 border-b border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
+            <div className="p-3 bg-white border border-emerald-200 rounded-xl flex items-center gap-3 shadow-xs">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+                <CheckCircle2 className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Present (&ge; 75%)</p>
-                <p className="text-lg font-extrabold text-white">{summary.present_count}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Present (&ge; 75%)</p>
+                <p className="text-base font-extrabold text-slate-900">{summary.present_count}</p>
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900 border border-purple-500/30 rounded-2xl flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold">
-                <Activity className="w-5 h-5" />
+            <div className="p-3 bg-white border border-purple-200 rounded-xl flex items-center gap-3 shadow-xs">
+              <div className="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+                <Activity className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Partial (&lt; 75%)</p>
-                <p className="text-lg font-extrabold text-white">{summary.partial_count || 0}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Partial (&lt; 75%)</p>
+                <p className="text-base font-extrabold text-slate-900">{summary.partial_count || 0}</p>
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900 border border-amber-500/30 rounded-2xl flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
-                <Clock className="w-5 h-5" />
+            <div className="p-3 bg-white border border-amber-200 rounded-xl flex items-center gap-3 shadow-xs">
+              <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+                <Clock className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Late / In Progress</p>
-                <p className="text-lg font-extrabold text-white">{summary.late_count + summary.unverified_count}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Late / In Progress</p>
+                <p className="text-base font-extrabold text-slate-900">{summary.late_count + summary.unverified_count}</p>
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900 border border-red-500/30 rounded-2xl flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-red-500/20 text-red-400 flex items-center justify-center font-bold">
-                <XCircle className="w-5 h-5" />
+            <div className="p-3 bg-white border border-red-200 rounded-xl flex items-center gap-3 shadow-xs">
+              <div className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center font-bold">
+                <XCircle className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Absent (0%)</p>
-                <p className="text-lg font-extrabold text-white">{summary.absent_count}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Absent (0%)</p>
+                <p className="text-base font-extrabold text-slate-900">{summary.absent_count}</p>
               </div>
             </div>
           </div>
         )}
 
         {/* SEARCH BAR */}
-        <div className="px-6 py-3 bg-slate-900/80 border-b border-slate-800 flex items-center gap-3 shrink-0">
+        <div className="px-5 py-2.5 bg-white border-b border-slate-200 flex items-center gap-3 shrink-0">
           <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search enrolled student by name or USN..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
+              className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             />
           </div>
-          <span className="text-xs text-slate-400 font-medium">
+          <span className="text-xs text-slate-500 font-medium">
             Showing {filteredRecords.length} of {summary?.records.length || 0} enrolled students
           </span>
         </div>
 
         {/* ROSTER TABLE */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-5">
           {loading && !summary && (
-            <div className="flex flex-col items-center justify-center py-16 space-y-3">
-              <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin" />
-              <p className="text-xs text-slate-400 font-medium">Loading classroom attendance records...</p>
+            <div className="flex flex-col items-center justify-center py-16 space-y-2">
+              <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
+              <p className="text-xs text-slate-500 font-medium">Loading classroom attendance records...</p>
             </div>
           )}
 
           {error && (
-            <div className="p-4 bg-red-950/60 border border-red-800 text-red-300 text-xs rounded-xl mb-4 flex items-center justify-between gap-3">
+            <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl mb-4 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
                 <span>{error}</span>
               </div>
               <button
                 onClick={fetchAttendance}
-                className="px-3 py-1 bg-red-900/60 hover:bg-red-800 text-white rounded-lg font-bold text-xs"
+                className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-bold text-xs"
               >
                 Retry
               </button>
@@ -315,9 +314,9 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
           )}
 
           {!loading && summary && summary.records.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-16 space-y-2 text-center">
-              <Users className="w-10 h-10 text-slate-600 mb-1" />
-              <p className="text-sm font-bold text-slate-300">No Attendance Records Found</p>
+            <div className="flex flex-col items-center justify-center py-16 space-y-1 text-center">
+              <Users className="w-8 h-8 text-slate-400 mb-1" />
+              <p className="text-sm font-bold text-slate-700">No Attendance Records Found</p>
               <p className="text-xs text-slate-500 max-w-sm">
                 No students enrolled in this course or session. Enrolled students will populate here with live time tracking.
               </p>
@@ -331,37 +330,37 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
           )}
 
           {!loading && filteredRecords.length > 0 && (
-            <div className="overflow-x-auto rounded-2xl border border-slate-800">
+            <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-xs">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-800/40 border-b border-slate-800 text-slate-400 uppercase font-bold text-[10px] tracking-wider">
-                    <th className="py-3 px-3">Student</th>
-                    <th className="py-3 px-3">Verification State</th>
-                    <th className="py-3 px-3">Present Duration</th>
-                    <th className="py-3 px-3">Attendance %</th>
-                    <th className="py-3 px-3">Status</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase font-bold text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Student</th>
+                    <th className="py-2.5 px-3">Verification State</th>
+                    <th className="py-2.5 px-3">Present Duration</th>
+                    <th className="py-2.5 px-3">Attendance %</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60">
+                <tbody className="divide-y divide-slate-100">
                   {filteredRecords.map((r) => {
                     const statusColors: Record<string, string> = {
-                      PRESENT: 'bg-emerald-950 text-emerald-300 border-emerald-800/50',
-                      PARTIAL: 'bg-purple-950 text-purple-300 border-purple-800/50',
-                      LATE: 'bg-amber-950 text-amber-300 border-amber-800/50',
-                      UNVERIFIED: 'bg-indigo-950 text-indigo-300 border-indigo-800/50',
-                      ABSENT: 'bg-red-950 text-red-300 border-red-800/50',
+                      PRESENT: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                      PARTIAL: 'bg-purple-50 text-purple-700 border-purple-200',
+                      LATE: 'bg-amber-50 text-amber-700 border-amber-200',
+                      UNVERIFIED: 'bg-blue-50 text-blue-700 border-blue-200',
+                      ABSENT: 'bg-red-50 text-red-700 border-red-200',
                     };
 
                     const durationMins = Math.floor((r.presence_duration_seconds || 0) / 60);
                     const attPct = r.attendance_percentage !== undefined ? r.attendance_percentage : 0;
 
                     return (
-                      <tr key={r.id} className="hover:bg-slate-800/30 transition-all">
+                      <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-3 px-3">
                           <div>
-                            <p className="font-bold text-white text-xs">{r.student_name || 'Student'}</p>
-                            <p className="text-[10px] text-slate-400 font-mono">USN: {r.student_id_number || 'N/A'}</p>
+                            <p className="font-bold text-slate-900 text-xs">{r.student_name || 'Student'}</p>
+                            <p className="text-[10px] text-slate-500 font-mono">USN: {r.student_id_number || 'N/A'}</p>
                           </div>
                         </td>
 
@@ -369,13 +368,13 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
                           {getVerificationStateBadge(r.verification_state, r.status)}
                         </td>
 
-                        <td className="py-3 px-3 text-slate-300 font-mono text-xs">
+                        <td className="py-3 px-3 text-slate-700 font-mono text-xs">
                           {durationMins > 0 ? `${durationMins} mins` : (r.presence_duration_seconds || 0) > 0 ? `${r.presence_duration_seconds}s` : '0 mins'}
                         </td>
 
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-2">
-                            <div className="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div className="w-16 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
                               <div
                                 className={`h-full rounded-full transition-all ${
                                   attPct >= 75 ? 'bg-emerald-500' : attPct > 0 ? 'bg-purple-500' : 'bg-red-500'
@@ -383,7 +382,7 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
                                 style={{ width: `${Math.min(100, Math.max(0, attPct))}%` }}
                               />
                             </div>
-                            <span className="font-mono text-xs font-bold text-slate-200">
+                            <span className="font-mono text-xs font-bold text-slate-800">
                               {attPct.toFixed(1)}%
                             </span>
                           </div>
@@ -399,7 +398,7 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
                               {r.status}
                             </span>
                             {r.is_manually_corrected && (
-                              <span className="text-[9px] text-indigo-400 flex items-center gap-1 font-medium">
+                              <span className="text-[9px] text-blue-600 flex items-center gap-1 font-medium">
                                 <ShieldCheck className="w-3 h-3" />
                                 <span>Manual ({r.corrected_by_name || 'Teacher'})</span>
                               </span>
@@ -414,9 +413,9 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
                               setNewStatus((r.status as any) || 'PRESENT');
                               setReason(r.correction_reason || '');
                             }}
-                            className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl border border-slate-700 transition-all text-xs font-semibold inline-flex items-center gap-1 ml-auto"
+                            className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 rounded-lg border border-slate-200 transition-colors text-xs font-medium inline-flex items-center gap-1 shadow-2xs"
                           >
-                            <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+                            <Edit3 className="w-3.5 h-3.5 text-blue-600" />
                             <span>Edit</span>
                           </button>
                         </td>
@@ -431,13 +430,13 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
 
         {/* MANUAL EDIT DIALOG */}
         {editingRecord && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="font-bold text-sm text-white">Manual Status Override</h4>
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+            <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 shadow-xl">
+              <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-2">
+                <h4 className="font-bold text-sm text-slate-900">Manual Attendance Status Override</h4>
                 <button
                   onClick={() => setEditingRecord(null)}
-                  className="text-slate-400 hover:text-white text-xs font-bold"
+                  className="text-slate-400 hover:text-slate-700 text-xs font-bold"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -445,17 +444,17 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
 
               <form onSubmit={handleUpdateStatus} className="space-y-4">
                 <div>
-                  <p className="text-xs text-slate-400">Student</p>
-                  <p className="text-sm font-bold text-white">{editingRecord.student_name}</p>
-                  <p className="text-xs text-slate-500 font-mono">ID: {editingRecord.student_id_number}</p>
+                  <p className="text-xs text-slate-500">Student Name</p>
+                  <p className="text-sm font-bold text-slate-900">{editingRecord.student_name}</p>
+                  <p className="text-xs text-slate-500 font-mono">USN: {editingRecord.student_id_number}</p>
                 </div>
 
                 <div>
-                  <label className="text-xs text-slate-300 font-semibold mb-1 block">New Attendance Status</label>
+                  <label className="text-xs text-slate-700 font-semibold mb-1 block">New Attendance Status</label>
                   <select
                     value={newStatus}
                     onChange={(e: any) => setNewStatus(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500"
                   >
                     <option value="PRESENT">PRESENT (&ge; 75%)</option>
                     <option value="PARTIAL">PARTIAL ATTENDANCE (&lt; 75%)</option>
@@ -466,29 +465,29 @@ export const TeacherAttendanceModal: React.FC<TeacherAttendanceModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-xs text-slate-300 font-semibold mb-1 block">Reason for Override</label>
+                  <label className="text-xs text-slate-700 font-semibold mb-1 block">Reason for Override</label>
                   <input
                     type="text"
                     required
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="e.g. Excused, Camera hardware malfunction..."
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
+                    placeholder="e.g. Excused medical leave, camera malfunction..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500"
                   />
                 </div>
 
-                <div className="flex justify-end gap-2 pt-2">
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                   <button
                     type="button"
                     onClick={() => setEditingRecord(null)}
-                    className="px-4 py-2 bg-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-bold"
+                    className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-xs font-semibold"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isUpdating}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs"
                   >
                     {isUpdating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
                     <span>Save Override</span>

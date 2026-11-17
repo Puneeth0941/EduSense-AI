@@ -24,19 +24,22 @@ import {
   Eye,
   X,
   Globe,
-  Clock,
 } from 'lucide-react';
 
 interface AnalyticsDashboardProps {
   sessions: ClassSession[];
   isTeacher: boolean;
+  initialSessionId?: string;
+  onSelectSession?: (sessionId: string) => void;
 }
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   sessions,
-  isTeacher,
+  isTeacher: _isTeacher,
+  initialSessionId,
+  onSelectSession,
 }) => {
-  const [selectedSessionId, setSelectedSessionId] = useState<string>('');
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(initialSessionId || '');
   const [analyticsOverview, setAnalyticsOverview] = useState<SessionAnalyticsOverview | null>(null);
   const [attendanceSummary, setAttendanceSummary] = useState<SessionAttendanceSummaryResponse | null>(null);
   const [facialWindow, setFacialWindow] = useState<FacialWindowAnalytics | null>(null);
@@ -53,36 +56,67 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   // Collapsible Advanced Analytics section
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 
-  // Auto-select first session if available
-  useEffect(() => {
-    if (sessions.length > 0 && !selectedSessionId) {
-      setSelectedSessionId(sessions[0].id);
-    }
+  // Deduplicate sessions by ID to ensure clean dropdown and state
+  const uniqueSessions = useMemo(() => {
+    const map = new Map<string, ClassSession>();
+    sessions.forEach((s) => {
+      if (s && s.id && !map.has(s.id)) {
+        map.set(s.id, s);
+      }
+    });
+    return Array.from(map.values());
   }, [sessions]);
 
-  // Fetch analytics data when selectedSessionId changes
-  const fetchAnalyticsData = async (sessionId: string) => {
+  // Sync selected session when sessions list updates
+  useEffect(() => {
+    if (uniqueSessions.length > 0) {
+      const exists = uniqueSessions.some((s) => s.id === selectedSessionId);
+      if (!selectedSessionId || !exists) {
+        const targetId = (initialSessionId && uniqueSessions.some((s) => s.id === initialSessionId))
+          ? initialSessionId
+          : uniqueSessions[0].id;
+        setSelectedSessionId(targetId);
+      }
+    }
+  }, [uniqueSessions, initialSessionId]);
+
+  // Fetch all analytics data for selected session
+  const fetchSessionAnalytics = async (sessionId: string) => {
     if (!sessionId) return;
     try {
       setLoading(true);
       setError(null);
 
-      const [overviewData, attData, winData, sumData] = await Promise.all([
-        analyticsApi.getSessionOverview(sessionId),
-        attendanceApi.getSessionAttendance(sessionId).catch(() => null),
-        analyticsApi.getClassroomFacialWindow(sessionId).catch(() => null),
-        analyticsApi.getSessionFacialSummary(sessionId).catch(() => null),
+      // Fetch overview, attendance summary, and facial data in parallel
+      const [overviewData, attData, facialWinData, facialSummData] = await Promise.all([
+        analyticsApi.getSessionOverview(sessionId).catch((err) => {
+          console.warn('[ANALYTICS] Overview fetch warning:', err);
+          return null;
+        }),
+        attendanceApi.getSessionAttendance(sessionId).catch((err) => {
+          console.warn('[ANALYTICS] Attendance fetch warning:', err);
+          return null;
+        }),
+        (typeof analyticsApi.getFacialWindowAnalytics === 'function'
+          ? analyticsApi.getFacialWindowAnalytics(sessionId)
+          : analyticsApi.getClassroomFacialWindow(sessionId)
+        ).catch((err) => {
+          console.warn('[ANALYTICS] Facial window fetch warning:', err);
+          return null;
+        }),
+        analyticsApi.getSessionFacialSummary(sessionId).catch((err) => {
+          console.warn('[ANALYTICS] Facial summary fetch warning:', err);
+          return null;
+        }),
       ]);
 
       setAnalyticsOverview(overviewData);
       setAttendanceSummary(attData);
-      setFacialWindow(winData);
-      setFacialSummary(sumData);
+      setFacialWindow(facialWinData);
+      setFacialSummary(facialSummData);
     } catch (err: any) {
-      setError(err.message || 'Failed to load session analytics overview');
-      setAnalyticsOverview(null);
-      setFacialWindow(null);
-      setFacialSummary(null);
+      console.error('[ANALYTICS] Fetch session analytics error:', err);
+      setError(err.message || 'Failed to fetch session analytics data');
     } finally {
       setLoading(false);
     }
@@ -90,325 +124,293 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   useEffect(() => {
     if (selectedSessionId) {
-      fetchAnalyticsData(selectedSessionId);
+      fetchSessionAnalytics(selectedSessionId);
     }
   }, [selectedSessionId]);
 
-  const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+  const selectedSession = uniqueSessions.find((s) => s.id === selectedSessionId) || sessions.find((s) => s.id === selectedSessionId);
 
-  // Background refresh for active sessions every 30s
-  useEffect(() => {
-    if (!selectedSessionId || selectedSession?.status !== 'ACTIVE') return;
-    const interval = setInterval(async () => {
-      try {
-        const [overviewData, winData, sumData] = await Promise.all([
-          analyticsApi.getSessionOverview(selectedSessionId).catch(() => null),
-          analyticsApi.getClassroomFacialWindow(selectedSessionId).catch(() => null),
-          analyticsApi.getSessionFacialSummary(selectedSessionId).catch(() => null),
-        ]);
-        if (overviewData) setAnalyticsOverview(overviewData);
-        if (winData) setFacialWindow(winData);
-        if (sumData) setFacialSummary(sumData);
-      } catch {
-        // Non-blocking refresh
-      }
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [selectedSessionId, selectedSession]);
-
-  // Helper: Attendance record lookup
-  const getStudentAttendance = (student: StudentEngagementSummary) => {
-    if (!attendanceSummary || !attendanceSummary.records) return 'IN_ROOM';
-    const rec = attendanceSummary.records.find(
-      (r) =>
-        r.student_id === student.student_id ||
-        (student.student_id_number && r.student_id_number === student.student_id_number) ||
-        (student.student_name && r.student_name === student.student_name)
-    );
-    return rec ? rec.status : 'IN_ROOM';
-  };
-
-  // Helper: Student has available engagement data
-  const hasEngagementData = (s: StudentEngagementSummary) => {
-    const hasFacial = !!(s.facial_summary && s.facial_summary.valid_samples > 0);
-    const hasSpeech = !!(
-      s.speech_sentiment &&
-      (s.speech_sentiment.valid_analyzed_segments > 0 ||
-        s.speech_sentiment.unsupported_language_segments > 0 ||
-        s.speech_sentiment.total_segments > 0)
-    );
-    return hasFacial || hasSpeech || s.sample_count > 0;
-  };
-
-  // Helper: Student needs teacher attention or review
-  const needsTeacherAttention = (s: StudentEngagementSummary) => {
-    const speech = s.speech_sentiment;
-    const facial = s.facial_summary;
-
-    const speechNegative =
-      speech?.dominant_status === 'analyzed' &&
-      (speech.dominant_sentiment === 'negative' || speech.dominant_sentiment === 'confused');
-
-    const facialNegative =
-      facial?.status === 'analyzed' &&
-      (facial.dominant_expression === 'sad' ||
-        facial.dominant_expression === 'angry' ||
-        facial.dominant_expression === 'fear');
-
-    const highDistraction = s.distraction_count >= 2;
-    const lowAttentiveness =
-      (facial?.attentiveness_score !== null &&
-        facial?.attentiveness_score !== undefined &&
-        facial.attentiveness_score < 50) ||
-      (s.attentiveness_subscore !== null &&
-        s.attentiveness_subscore !== undefined &&
-        s.attentiveness_subscore < 50);
-
-    return !!(speechNegative || facialNegative || highDistraction || lowAttentiveness);
-  };
-
-  // Student metrics & list counts
+  // Quick stats calculations
+  const totalPresentCount = attendanceSummary?.present_count ?? 0;
+  const totalEnrolledCount = (attendanceSummary as any)?.total_enrolled ?? attendanceSummary?.total_students ?? 0;
   const studentSummaries = analyticsOverview?.student_summaries || [];
 
+  // Students with sufficient speech or facial data
   const studentsWithDataCount = useMemo(() => {
-    return studentSummaries.filter(hasEngagementData).length;
+    return studentSummaries.filter(
+      (s) =>
+        (s.speech_sentiment && s.speech_sentiment.valid_analyzed_segments > 0) ||
+        (s.facial_summary && s.facial_summary.valid_samples > 0)
+    ).length;
   }, [studentSummaries]);
 
+  // Students who may need teacher attention
   const studentsNeedingAttentionCount = useMemo(() => {
-    return studentSummaries.filter(needsTeacherAttention).length;
+    return studentSummaries.filter((s) => {
+      const isNegSpeech = s.speech_sentiment?.dominant_sentiment === 'negative';
+      const isConfused = s.speech_sentiment?.dominant_sentiment === 'confused';
+      const hasManyDistractions = (s.distraction_count || 0) >= 3;
+      return isNegSpeech || isConfused || hasManyDistractions;
+    }).length;
   }, [studentSummaries]);
 
-  // Filtered students for display table
+  // Total speech segments in session
+  const totalSpeechSegments =
+    analyticsOverview?.classroom_speech_sentiment?.total_student_transcripts ?? 0;
+
+  // Filtered student list for table
   const displayedStudents = useMemo(() => {
     if (activeFilter === 'needs_attention') {
-      return studentSummaries.filter(needsTeacherAttention);
+      return studentSummaries.filter((s) => {
+        const isNegSpeech = s.speech_sentiment?.dominant_sentiment === 'negative';
+        const isConfused = s.speech_sentiment?.dominant_sentiment === 'confused';
+        const hasManyDistractions = (s.distraction_count || 0) >= 3;
+        return isNegSpeech || isConfused || hasManyDistractions;
+      });
     }
     if (activeFilter === 'with_data') {
-      return studentSummaries.filter(hasEngagementData);
+      return studentSummaries.filter(
+        (s) =>
+          (s.speech_sentiment && s.speech_sentiment.valid_analyzed_segments > 0) ||
+          (s.facial_summary && s.facial_summary.valid_samples > 0)
+      );
     }
     return studentSummaries;
   }, [studentSummaries, activeFilter]);
 
-  // Attendance count calculation
-  const totalPresentCount = attendanceSummary
-    ? attendanceSummary.present_count + attendanceSummary.late_count
-    : studentSummaries.length;
-  const totalEnrolledCount = attendanceSummary?.total_students || studentSummaries.length;
+  // Map attendance record to student
+  const getStudentAttendance = (student: StudentEngagementSummary) => {
+    if (!attendanceSummary?.records) return 'UNKNOWN';
+    const rec = attendanceSummary.records.find((r) => r.student_id === student.student_id);
+    return rec ? rec.status : 'IN_ROOM';
+  };
 
-  const totalSpeechSegments =
-    analyticsOverview?.classroom_speech_sentiment?.total_student_transcripts ||
-    studentSummaries.reduce((acc, s) => acc + (s.speech_sentiment?.total_segments || 0), 0);
+  // Flag if student needs teacher attention
+  const needsTeacherAttention = (student: StudentEngagementSummary) => {
+    const isNeg = student.speech_sentiment?.dominant_sentiment === 'negative';
+    const isConfused = student.speech_sentiment?.dominant_sentiment === 'confused';
+    const highDistractions = (student.distraction_count || 0) >= 3;
+    return isNeg || isConfused || highDistractions;
+  };
 
   return (
     <div className="space-y-6">
-      {/* 1. HEADER: Classroom Name, Session Title, Live/Ended Status & Selector */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="bg-indigo-950 text-indigo-300 text-xs font-semibold px-3 py-1 rounded-full border border-indigo-800/50 flex items-center gap-1.5">
-              <span>{attendanceSummary?.classroom_title || selectedSession?.title || 'Classroom Analytics'}</span>
+      {/* 1. TOP HEADER & SESSION SELECTOR */}
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="bg-blue-50 text-blue-700 text-xs font-semibold px-2.5 py-0.5 rounded-full border border-blue-100 flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-blue-600" />
+              <span>Multimodal Analytics</span>
             </span>
-
-            {/* Session Live / Ended Badge */}
-            {selectedSession?.status === 'ACTIVE' ? (
-              <span className="bg-emerald-950 text-emerald-300 text-xs font-semibold px-3 py-1 rounded-full border border-emerald-800/50 flex items-center gap-1.5 animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Live Class Session</span>
-              </span>
-            ) : selectedSession?.status === 'COMPLETED' ? (
-              <span className="bg-slate-800 text-slate-300 text-xs font-semibold px-3 py-1 rounded-full border border-slate-700 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />
-                <span>Session Ended</span>
-              </span>
-            ) : (
-              <span className="bg-blue-950 text-blue-300 text-xs font-semibold px-3 py-1 rounded-full border border-blue-800/50 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-blue-400" />
-                <span>Scheduled Session</span>
-              </span>
-            )}
           </div>
-
-          <h2 className="text-xl font-bold text-white tracking-tight">
-            {selectedSession?.title || 'Teacher Engagement Dashboard'}
-          </h2>
-          <p className="text-xs text-slate-400">
-            {isTeacher
-              ? 'Clear overview of student attendance, speech sentiment, visible facial expressions, and students needing review.'
-              : 'Your personal session engagement and attendance insights.'}
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Classroom Engagement & Attendance Analytics</h2>
+          <p className="text-xs text-slate-500">
+            Monitor real-time student attendance, speech sentiment, visible facial expressions, and student check-ins.
           </p>
         </div>
 
-        {/* Session Dropdown Selector & Refresh Action */}
-        <div className="w-full md:w-auto flex items-end gap-2 shrink-0">
+        {/* Controls: Selector & Refresh */}
+        <div className="flex items-center gap-3 w-full md:w-auto">
           <div className="w-full md:w-72">
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
               Select Class Session
             </label>
             <div className="relative">
               <select
                 value={selectedSessionId}
-                onChange={(e) => setSelectedSessionId(e.target.value)}
-                className="w-full appearance-none px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs font-semibold focus:outline-none focus:border-indigo-500 pr-10 cursor-pointer"
+                onChange={(e) => {
+                  const newId = e.target.value;
+                  setSelectedSessionId(newId);
+                  if (onSelectSession) onSelectSession(newId);
+                }}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500 appearance-none pr-8 font-medium"
               >
-                {sessions.length === 0 ? (
+                {uniqueSessions.length === 0 ? (
                   <option value="">No sessions available</option>
                 ) : (
-                  sessions.map((sess) => (
+                  uniqueSessions.map((sess) => (
                     <option key={sess.id} value={sess.id}>
                       {sess.title} ({sess.status})
                     </option>
                   ))
                 )}
               </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
             </div>
           </div>
 
           <button
-            onClick={() => selectedSessionId && fetchAnalyticsData(selectedSessionId)}
+            onClick={() => selectedSessionId && fetchSessionAnalytics(selectedSessionId)}
             disabled={loading || !selectedSessionId}
             title="Refresh analytics data"
-            className="p-2.5 bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-xl transition-all disabled:opacity-50"
+            className="mt-4 p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors disabled:opacity-40"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-600' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* AI UNDERSTANDING & TRANSPARENCY NOTICE */}
-      <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-start gap-3">
-        <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-        <div className="text-xs text-slate-300 leading-relaxed">
-          <strong className="text-white font-semibold">Teacher Insight Note:</strong> Speech sentiment describes the words detected, while facial analysis estimates visible expressions from camera frames. They are separate signals and do not prove a student's actual internal emotional state. Use these indicators to guide supportive classroom check-ins.
+      {/* AI GUIDANCE BANNER */}
+      <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl flex items-start gap-3">
+        <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="text-xs text-amber-900 leading-relaxed">
+          <strong className="font-semibold text-amber-950">AI Transparency Note:</strong> Speech sentiment analyzes the words spoken. Facial analysis reflects visible camera expressions. These serve as supportive classroom engagement indicators and do not prove a student's internal emotional state.
         </div>
       </div>
 
       {/* ERROR / RETRY VIEW */}
       {error && (
-        <div className="p-6 bg-red-950/50 border border-red-800/60 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 text-red-300">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
-            <span className="text-xs font-medium">{error}</span>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between text-red-700 text-xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+            <span className="font-medium">{error}</span>
           </div>
           <button
-            onClick={() => selectedSessionId && fetchAnalyticsData(selectedSessionId)}
-            className="px-4 py-2 bg-red-800 hover:bg-red-700 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-all shadow"
+            onClick={() => selectedSessionId && fetchSessionAnalytics(selectedSessionId)}
+            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-bold text-xs"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Retry Analytics</span>
+            Retry
           </button>
         </div>
       )}
 
       {/* LOADING STATE */}
       {loading ? (
-        <div className="p-16 text-center bg-slate-900 border border-slate-800 rounded-3xl space-y-3">
-          <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mx-auto" />
-          <p className="text-xs font-medium text-slate-300">Loading student attendance and engagement data...</p>
+        <div className="p-16 text-center bg-white border border-slate-200 rounded-xl space-y-2 shadow-xs">
+          <RefreshCw className="w-6 h-6 text-blue-600 animate-spin mx-auto" />
+          <p className="text-xs font-medium text-slate-600">Loading student attendance and engagement data...</p>
         </div>
-      ) : !analyticsOverview || sessions.length === 0 ? (
-        /* EMPTY STATE */
-        <div className="p-12 text-center bg-slate-900/60 border border-slate-800 rounded-3xl space-y-3">
-          <Users className="w-10 h-10 text-slate-600 mx-auto" />
-          <h3 className="text-sm font-bold text-slate-300">No Session Selected</h3>
+      ) : uniqueSessions.length === 0 ? (
+        /* NO SESSIONS AT ALL */
+        <div className="p-12 text-center bg-white border border-slate-200 rounded-xl space-y-2 shadow-xs">
+          <Users className="w-8 h-8 text-slate-400 mx-auto" />
+          <h3 className="text-sm font-bold text-slate-700">No Class Sessions Available</h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            There are currently no active or completed class sessions for your courses. Start a class session to begin recording analytics.
+          </p>
+        </div>
+      ) : !selectedSessionId ? (
+        /* SESSIONS EXIST BUT NONE SELECTED */
+        <div className="p-12 text-center bg-white border border-slate-200 rounded-xl space-y-2 shadow-xs">
+          <Users className="w-8 h-8 text-slate-400 mx-auto" />
+          <h3 className="text-sm font-bold text-slate-700">No Session Selected</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
             Choose a class session above to view student attendance, speech sentiment, visible facial expressions, and student check-ins.
           </p>
         </div>
+      ) : !analyticsOverview ? (
+        /* SESSION SELECTED BUT OVERVIEW RETURNED EMPTY/ERROR */
+        <div className="p-12 text-center bg-white border border-slate-200 rounded-xl space-y-3 shadow-xs">
+          <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+          <h3 className="text-sm font-bold text-slate-800">
+            Analytics Not Available for {selectedSession?.title || 'Selected Session'}
+          </h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            {error || 'No analytics or attendance records have been captured for this session yet.'}
+          </p>
+          <button
+            onClick={() => selectedSessionId && fetchSessionAnalytics(selectedSessionId)}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry Loading Analytics</span>
+          </button>
+        </div>
       ) : (
         <>
-          {/* 2. THREE SIMPLE SUMMARY CARDS */}
+          {/* 2. THREE SUMMARY CARDS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Card 1: Students Present */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2 shadow-lg">
-              <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
                 <span>Students Present</span>
-                <Users className="w-4 h-4 text-emerald-400" />
+                <Users className="w-4 h-4 text-emerald-600" />
               </div>
               <div className="flex items-baseline justify-between">
-                <span className="text-3xl font-extrabold text-white">
+                <span className="text-2xl font-bold text-slate-900">
                   {totalPresentCount}
                 </span>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500">
                   of {totalEnrolledCount} enrolled
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-500">
                 {analyticsOverview.attendance_rate}% classroom attendance rate
               </p>
             </div>
 
             {/* Card 2: Students with Analytics Data */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2 shadow-lg">
-              <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
                 <span>Students with Sufficient Data</span>
-                <Sparkles className="w-4 h-4 text-indigo-400" />
+                <Sparkles className="w-4 h-4 text-blue-600" />
               </div>
               <div className="flex items-baseline justify-between">
-                <span className="text-3xl font-extrabold text-white">
+                <span className="text-2xl font-bold text-slate-900">
                   {studentsWithDataCount}
                 </span>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500">
                   of {studentSummaries.length} attending
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-500">
                 Have verified speech transcripts or facial expression samples
               </p>
             </div>
 
             {/* Card 3: Speech Segments Received */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2 shadow-lg">
-              <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
                 <span>Speech Segments Received</span>
-                <Mic className="w-4 h-4 text-cyan-400" />
+                <Mic className="w-4 h-4 text-cyan-600" />
               </div>
               <div className="flex items-baseline justify-between">
-                <span className="text-3xl font-extrabold text-white">
+                <span className="text-2xl font-bold text-slate-900">
                   {totalSpeechSegments}
                 </span>
-                <span className="text-xs text-cyan-400 font-medium">
+                <span className="text-xs text-cyan-700 font-medium">
                   Spoken utterances
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-500">
                 Spoken classroom responses transcribed via faster-whisper
               </p>
             </div>
           </div>
 
           {/* 3. STUDENT LIST / TABLE & QUICK FILTERS */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xs">
             {/* Header & Filter Controls */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                  <Users className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                  <Users className="w-4 h-4 text-blue-600" />
                   <span>Student Engagement & Analytics List</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Review student attendance, speech sentiment, visible facial expressions, and recent spoken transcripts.
                 </p>
               </div>
 
               {/* Filter Toggles */}
-              <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs shrink-0">
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs shrink-0">
                 <button
                   onClick={() => setActiveFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                  className={`px-3 py-1.5 rounded-md font-semibold transition-colors ${
                     activeFilter === 'all'
-                      ? 'bg-indigo-600 text-white shadow'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-white text-blue-600 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   All ({studentSummaries.length})
                 </button>
                 <button
                   onClick={() => setActiveFilter('needs_attention')}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 ${
                     activeFilter === 'needs_attention'
-                      ? 'bg-amber-600 text-white shadow'
-                      : 'text-amber-400/90 hover:text-amber-300'
+                      ? 'bg-amber-100 text-amber-800 shadow-2xs font-bold'
+                      : 'text-amber-700 hover:text-amber-900'
                   }`}
                 >
                   <AlertTriangle className="w-3.5 h-3.5" />
@@ -416,10 +418,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 </button>
                 <button
                   onClick={() => setActiveFilter('with_data')}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                  className={`px-3 py-1.5 rounded-md font-semibold transition-colors ${
                     activeFilter === 'with_data'
-                      ? 'bg-indigo-600 text-white shadow'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-white text-blue-600 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   With Data ({studentsWithDataCount})
@@ -429,28 +431,28 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
             {/* Table Content */}
             {displayedStudents.length === 0 ? (
-              <div className="p-8 text-center border border-dashed border-slate-800 rounded-2xl text-xs text-slate-500 space-y-1">
-                <p className="font-semibold text-slate-400">No students match the current filter.</p>
-                <p className="text-[11px] text-slate-500">
+              <div className="p-8 text-center border border-dashed border-slate-200 rounded-xl text-xs text-slate-500 space-y-1">
+                <p className="font-semibold text-slate-600">No students match the current filter.</p>
+                <p className="text-[11px] text-slate-400">
                   {activeFilter === 'needs_attention'
-                    ? 'Great news! No students currently flag negative sentiment, confusion, or elevated distractions.'
+                    ? 'No students currently flag negative sentiment or elevated distractions.'
                     : 'No student engagement records found.'}
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-xs">
+                <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase tracking-wider">
-                      <th className="pb-3 px-4">Student</th>
-                      <th className="pb-3 px-3">Attendance</th>
-                      <th className="pb-3 px-3">Speech Sentiment</th>
-                      <th className="pb-3 px-3">Facial Expression</th>
-                      <th className="pb-3 px-3">Latest Spoken Words</th>
-                      <th className="pb-3 px-4 text-right">Action</th>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
+                      <th className="py-2.5 px-3">Student</th>
+                      <th className="py-2.5 px-3">Attendance</th>
+                      <th className="py-2.5 px-3">Speech Sentiment</th>
+                      <th className="py-2.5 px-3">Facial Expression</th>
+                      <th className="py-2.5 px-3">Latest Spoken Words</th>
+                      <th className="py-2.5 px-3 text-right">Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-medium text-slate-300">
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
                     {displayedStudents.map((s, idx) => {
                       const attStatus = getStudentAttendance(s);
                       const needsReview = needsTeacherAttention(s);
@@ -458,91 +460,87 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                       const facial = s.facial_summary;
 
                       return (
-                        <tr key={s.student_id || idx} className="hover:bg-slate-800/40 transition-all">
+                        <tr key={s.student_id || idx} className="hover:bg-slate-50/70 transition-colors">
                           {/* 1. Student Name & Identification */}
-                          <td className="py-3.5 px-4 font-semibold text-white">
+                          <td className="py-3 px-3 font-semibold text-slate-900">
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-white text-xs">{s.student_name || 'Student'}</span>
+                                <span className="font-bold text-slate-900 text-xs">{s.student_name || 'Student'}</span>
                                 {needsReview && (
-                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800/60">
-                                    Needs Review
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                    Review
                                   </span>
                                 )}
                               </div>
-                              <span className="text-[11px] text-slate-400 font-mono">
+                              <span className="text-[11px] text-slate-500 font-mono">
                                 {s.student_id_number || s.student_email || s.student_id.substring(0, 8)}
                               </span>
                             </div>
                           </td>
 
                           {/* 2. Attendance Status */}
-                          <td className="py-3.5 px-3">
+                          <td className="py-3 px-3">
                             {attStatus === 'PRESENT' ? (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800/50">
+                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                                 Present
                               </span>
                             ) : attStatus === 'LATE' ? (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-950 text-amber-300 border border-amber-800/50">
+                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                                 Late
                               </span>
                             ) : attStatus === 'ABSENT' ? (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-950 text-rose-300 border border-rose-800/50">
+                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
                                 Absent
                               </span>
-                            ) : attStatus === 'UNVERIFIED' ? (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 text-slate-400 border border-slate-800">
-                                Unverified
-                              </span>
                             ) : (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-950 text-slate-300 border border-slate-800">
+                              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                 In Room
                               </span>
                             )}
                           </td>
 
                           {/* 3. Speech Sentiment */}
-                          <td className="py-3.5 px-3">
+                          <td className="py-3 px-3">
                             {speech && speech.dominant_status === 'analyzed' && speech.dominant_sentiment ? (
                               <span
                                 className={`inline-block font-semibold px-2 py-0.5 rounded text-[11px] border capitalize ${
                                   speech.dominant_sentiment === 'positive'
-                                    ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                     : speech.dominant_sentiment === 'negative'
-                                    ? 'bg-rose-950/80 text-rose-300 border-rose-800/60'
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
                                     : speech.dominant_sentiment === 'confused'
-                                    ? 'bg-purple-950/80 text-purple-300 border-purple-800/60'
-                                    : 'bg-slate-950 text-slate-200 border-slate-800'
+                                    ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
                                 }`}
                               >
                                 {speech.dominant_sentiment}
                               </span>
                             ) : speech && speech.dominant_status === 'unsupported_language' ? (
-                              <span className="font-medium text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40 text-[10px] inline-block">
-                                Sentiment unavailable for this language
+                              <span className="font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[10px] inline-block">
+                                Non-English
                               </span>
                             ) : speech && speech.dominant_status === 'no_transcripts' ? (
-                              <span className="text-slate-500 text-[11px]">No speech recorded</span>
+                              <span className="text-slate-400 text-[11px]">No speech recorded</span>
                             ) : (
-                              <span className="text-slate-500 text-[11px]">Not enough data yet</span>
+                              <span className="text-slate-400 text-[11px]">Not enough data</span>
                             )}
                           </td>
 
                           {/* 4. Facial Expression */}
-                          <td className="py-3.5 px-3">
+                          <td className="py-3 px-3">
                             {facial && facial.status === 'analyzed' && facial.dominant_expression !== 'insufficient_data' ? (
                               <div className="flex items-center gap-1.5">
                                 <span
                                   className={`font-semibold capitalize px-2 py-0.5 rounded text-[11px] border ${
                                     facial.dominant_expression === 'happy'
-                                      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60'
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                       : facial.dominant_expression === 'sad'
-                                      ? 'bg-rose-950/80 text-rose-300 border-rose-800/60'
+                                      ? 'bg-rose-50 text-rose-700 border-rose-200'
                                       : facial.dominant_expression === 'angry'
-                                      ? 'bg-red-950/80 text-red-300 border-red-800/60'
+                                      ? 'bg-red-50 text-red-700 border-red-200'
                                       : facial.dominant_expression === 'fear'
-                                      ? 'bg-amber-950/80 text-amber-300 border-amber-800/60'
-                                      : 'bg-slate-950 text-slate-200 border-slate-800'
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-slate-100 text-slate-700 border-slate-200'
                                   }`}
                                 >
                                   {facial.dominant_expression}
@@ -552,22 +550,22 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                                 </span>
                               </div>
                             ) : (
-                              <span className="text-slate-500 text-[11px]">Not enough data yet</span>
+                              <span className="text-slate-400 text-[11px]">Not enough data</span>
                             )}
                           </td>
 
                           {/* 5. Latest Spoken Words */}
-                          <td className="py-3.5 px-3 max-w-[220px]">
+                          <td className="py-3 px-3 max-w-[220px]">
                             {speech?.recent_snippets && speech.recent_snippets.length > 0 ? (
-                              <div className="space-y-1">
+                              <div className="space-y-0.5">
                                 <div
-                                  className="text-xs text-slate-200 truncate font-sans max-w-[200px]"
+                                  className="text-xs text-slate-800 truncate max-w-[200px]"
                                   title={speech.recent_snippets[0].transcript_text}
                                 >
                                   "{speech.recent_snippets[0].transcript_text}"
                                 </div>
                                 <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                                  <span className="px-1 py-0.2 rounded bg-slate-950 text-slate-300 font-mono text-[9px] border border-slate-800">
+                                  <span className="px-1 py-0.2 rounded bg-slate-100 text-slate-600 font-mono text-[9px] border border-slate-200">
                                     {(speech.recent_snippets[0].language || 'en').toUpperCase()}
                                   </span>
                                   <span>
@@ -579,18 +577,18 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                                 </div>
                               </div>
                             ) : (
-                              <span className="text-slate-600 text-[11px]">—</span>
+                              <span className="text-slate-400 text-[11px]">—</span>
                             )}
                           </td>
 
                           {/* 6. View Details Action */}
-                          <td className="py-3.5 px-4 text-right">
+                          <td className="py-3 px-3 text-right">
                             <button
                               onClick={() => setSelectedStudent(s)}
-                              className="px-3 py-1.5 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 hover:text-white rounded-xl text-xs font-semibold border border-indigo-800/50 transition-all flex items-center gap-1.5 ml-auto"
+                              className="px-2.5 py-1 bg-white hover:bg-slate-50 text-blue-600 rounded-lg text-xs font-semibold border border-slate-200 transition-colors inline-flex items-center gap-1 shadow-2xs ml-auto"
                             >
                               <Eye className="w-3.5 h-3.5" />
-                              <span>View Details</span>
+                              <span>Details</span>
                             </button>
                           </td>
                         </tr>
@@ -604,50 +602,50 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
           {/* 4. STUDENT DETAILS MODAL */}
           {selectedStudent && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-5 shadow-2xl">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+              <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 shadow-xl">
                 {/* Modal Header */}
-                <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+                <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-bold text-white">
+                      <h3 className="text-base font-bold text-slate-900">
                         {selectedStudent.student_name || 'Student Details'}
                       </h3>
                       {needsTeacherAttention(selectedStudent) && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60 flex items-center gap-1">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3" />
-                          <span>Teacher Review Suggested</span>
+                          <span>Review Suggested</span>
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">
+                    <p className="text-xs text-slate-500 font-mono mt-0.5">
                       {selectedStudent.student_id_number || selectedStudent.student_email || selectedStudent.student_id}
                     </p>
                   </div>
                   <button
                     onClick={() => setSelectedStudent(null)}
-                    className="p-1.5 text-slate-400 hover:text-white bg-slate-950 border border-slate-800 rounded-xl"
+                    className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
 
                 {/* AI Guidance Callout */}
-                <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-2xl flex items-start gap-2.5 text-xs text-slate-300 leading-relaxed">
-                  <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-2.5 text-xs text-blue-900 leading-relaxed">
+                  <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-semibold text-white">Two Separate Signals:</span> Speech sentiment analyzes the words spoken. Facial analysis estimates visible expressions on camera. Neither signal is proof of inner emotion.
+                    <span className="font-semibold text-blue-950">Multimodal Indicators:</span> Speech sentiment analyzes the words spoken. Facial analysis estimates visible camera expressions. These are supportive indicators.
                   </div>
                 </div>
 
                 {/* Section A: Speech Sentiment & Recent Transcripts */}
-                <div className="p-4 bg-slate-950 border border-slate-800/80 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
                       <Mic className="w-3.5 h-3.5" />
-                      <span>Speech Sentiment (English text sentiment analysis)</span>
+                      <span>Speech Sentiment Analysis</span>
                     </span>
-                    <span className="text-[11px] text-slate-400 font-semibold">
+                    <span className="text-[11px] text-slate-500 font-semibold">
                       Analyzed Segments: {selectedStudent.speech_sentiment?.valid_analyzed_segments || 0}
                     </span>
                   </div>
@@ -655,26 +653,26 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   {selectedStudent.speech_sentiment && selectedStudent.speech_sentiment.valid_analyzed_segments > 0 ? (
                     <div className="space-y-2">
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
-                        <div className="p-2 bg-slate-900 rounded-xl border border-slate-800">
-                          <span className="text-slate-400 block text-[10px]">Positive</span>
-                          <span className="text-emerald-400 font-bold">{selectedStudent.speech_sentiment.positive_count}</span>
+                        <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-slate-500 block text-[10px]">Positive</span>
+                          <span className="text-emerald-700 font-bold">{selectedStudent.speech_sentiment.positive_count}</span>
                         </div>
-                        <div className="p-2 bg-slate-900 rounded-xl border border-slate-800">
-                          <span className="text-slate-400 block text-[10px]">Neutral</span>
-                          <span className="text-slate-300 font-bold">{selectedStudent.speech_sentiment.neutral_count}</span>
+                        <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-slate-500 block text-[10px]">Neutral</span>
+                          <span className="text-slate-700 font-bold">{selectedStudent.speech_sentiment.neutral_count}</span>
                         </div>
-                        <div className="p-2 bg-slate-900 rounded-xl border border-slate-800">
-                          <span className="text-slate-400 block text-[10px]">Confused</span>
-                          <span className="text-purple-300 font-bold">{selectedStudent.speech_sentiment.confused_count}</span>
+                        <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-slate-500 block text-[10px]">Confused</span>
+                          <span className="text-purple-700 font-bold">{selectedStudent.speech_sentiment.confused_count}</span>
                         </div>
-                        <div className="p-2 bg-slate-900 rounded-xl border border-slate-800">
-                          <span className="text-slate-400 block text-[10px]">Negative</span>
-                          <span className="text-rose-400 font-bold">{selectedStudent.speech_sentiment.negative_count}</span>
+                        <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-slate-500 block text-[10px]">Negative</span>
+                          <span className="text-rose-700 font-bold">{selectedStudent.speech_sentiment.negative_count}</span>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-slate-500">
                       {selectedStudent.speech_sentiment?.unsupported_language_segments
                         ? 'Student spoke in Hindi or Kannada. Spoken words are recorded, but sentiment is unavailable for non-English speech.'
                         : 'No spoken speech segments analyzed for this student.'}
@@ -683,13 +681,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
                   {/* Recent Transcripts List */}
                   {selectedStudent.speech_sentiment?.recent_snippets && selectedStudent.speech_sentiment.recent_snippets.length > 0 && (
-                    <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Recent Spoken Transcripts</span>
+                    <div className="space-y-1.5 pt-2 border-t border-slate-200">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Recent Spoken Transcripts</span>
                       <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                         {selectedStudent.speech_sentiment.recent_snippets.map((snip) => (
-                          <div key={snip.id} className="p-2 bg-slate-900 rounded-xl border border-slate-800/60 text-xs flex items-start justify-between gap-2">
-                            <span className="text-slate-200">"{snip.transcript_text}"</span>
-                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800 shrink-0">
+                          <div key={snip.id} className="p-2 bg-white rounded-lg border border-slate-200 text-xs flex items-start justify-between gap-2 shadow-2xs">
+                            <span className="text-slate-800">"{snip.transcript_text}"</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
                               {(snip.language || 'en').toUpperCase()}
                             </span>
                           </div>
@@ -700,13 +698,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 </div>
 
                 {/* Section B: Visible Facial Expression Analysis */}
-                <div className="p-4 bg-slate-950 border border-slate-800/80 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-700 flex items-center gap-1.5">
                       <Smile className="w-3.5 h-3.5" />
                       <span>Facial Expression Analysis</span>
                     </span>
-                    <span className="text-[11px] text-slate-400 font-semibold">
+                    <span className="text-[11px] text-slate-500 font-semibold">
                       Valid Samples: {selectedStudent.facial_summary?.valid_samples || 0}
                     </span>
                   </div>
@@ -714,17 +712,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   {selectedStudent.facial_summary && selectedStudent.facial_summary.status === 'analyzed' ? (
                     <div className="space-y-2.5">
                       <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                          <span className="text-slate-400 block text-[10px]">Dominant Observed Expression</span>
-                          <span className="text-white font-bold capitalize text-sm">
+                        <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-slate-500 block text-[10px]">Dominant Expression</span>
+                          <span className="text-slate-900 font-bold capitalize text-sm">
                             {selectedStudent.facial_summary.dominant_expression === 'insufficient_data'
-                              ? 'Not enough data yet'
+                              ? 'Not enough data'
                               : selectedStudent.facial_summary.dominant_expression}
                           </span>
                         </div>
-                        <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                          <span className="text-slate-400 block text-[10px]">Attentiveness Subscore</span>
-                          <span className="text-emerald-400 font-bold text-sm">
+                        <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-slate-500 block text-[10px]">Attentiveness Score</span>
+                          <span className="text-emerald-700 font-bold text-sm">
                             {selectedStudent.facial_summary.attentiveness_score !== null && selectedStudent.facial_summary.attentiveness_score !== undefined
                               ? `${selectedStudent.facial_summary.attentiveness_score}%`
                               : '—'}
@@ -734,14 +732,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
                       {/* Distribution breakdown */}
                       <div className="space-y-1.5 pt-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Observed Expression Distribution</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expression Distribution</span>
                         <div className="grid grid-cols-5 gap-1.5 text-center text-[10px]">
                           {['neutral', 'happy', 'sad', 'angry', 'fear'].map((em) => {
                             const pct = Math.round((selectedStudent.facial_summary?.expression_distribution?.[em] || 0) * 100);
                             return (
-                              <div key={em} className="p-1.5 bg-slate-900 rounded-lg border border-slate-800">
-                                <span className="text-slate-400 block capitalize">{em}</span>
-                                <span className="text-indigo-300 font-bold">{pct}%</span>
+                              <div key={em} className="p-1.5 bg-white rounded-md border border-slate-200 shadow-2xs">
+                                <span className="text-slate-500 block capitalize">{em}</span>
+                                <span className="text-blue-700 font-bold">{pct}%</span>
                               </div>
                             );
                           })}
@@ -749,7 +747,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-slate-500">
                       Not enough data yet. Camera may be off or face was not clearly visible in video samples.
                     </p>
                   )}
@@ -757,25 +755,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
                 {/* Section C: Attentiveness & Activity Signals */}
                 <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-between">
-                    <span className="text-slate-400">Distraction Events Logged</span>
-                    <span className={`font-bold ${selectedStudent.distraction_count > 0 ? 'text-amber-400' : 'text-slate-300'}`}>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                    <span className="text-slate-500">Distraction Events Logged</span>
+                    <span className={`font-bold ${selectedStudent.distraction_count > 0 ? 'text-amber-700' : 'text-slate-700'}`}>
                       {selectedStudent.distraction_count}
                     </span>
                   </div>
-                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-between">
-                    <span className="text-slate-400">Questions & Inquiries</span>
-                    <span className="font-bold text-indigo-300">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                    <span className="text-slate-500">Questions & Inquiries</span>
+                    <span className="font-bold text-blue-700">
                       {selectedStudent.question_count}
                     </span>
                   </div>
                 </div>
 
                 {/* Footer Action */}
-                <div className="flex justify-end pt-2">
+                <div className="flex justify-end pt-2 border-t border-slate-100">
                   <button
                     onClick={() => setSelectedStudent(null)}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold"
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
                   >
                     Close Details
                   </button>
@@ -785,65 +783,65 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           )}
 
           {/* 5. COLLAPSIBLE ADVANCED ANALYTICS SECTION */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xs">
             <button
               onClick={() => setShowAdvanced(!showAdvanced)}
               className="w-full flex items-center justify-between text-left group"
             >
               <div className="space-y-0.5">
-                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2 group-hover:text-white transition-all">
+                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2 group-hover:text-blue-600 transition-colors">
                   <span>Advanced Analytics & Detailed Distributions</span>
                 </h3>
                 <p className="text-xs text-slate-500">
                   Detailed 5-minute temporal window facial breakdown, multilingual verbal speech coverage, and subscore models.
                 </p>
               </div>
-              <div className="p-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-400 group-hover:text-white transition-all">
+              <div className="p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-500 group-hover:text-slate-800 transition-colors">
                 {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </div>
             </button>
 
             {showAdvanced && (
-              <div className="space-y-6 pt-4 border-t border-slate-800/80">
+              <div className="space-y-5 pt-4 border-t border-slate-100">
                 {/* 5A. RESULTS OVER TIME (5-MINUTE FACIAL AGGREGATION) */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-blue-700 flex items-center gap-1.5">
                       <Smile className="w-4 h-4" />
                       <span>Results over time (5-minute temporal window)</span>
                     </h4>
                     {facialWindow?.window_start && (
-                      <span className="text-[11px] text-slate-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800 font-mono">
-                        Current: {new Date(facialWindow.window_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(facialWindow.window_end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      <span className="text-[11px] text-slate-600 bg-slate-50 px-2.5 py-0.5 rounded-md border border-slate-200 font-mono">
+                        {new Date(facialWindow.window_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(facialWindow.window_end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     )}
                   </div>
 
                   {!facialWindow || facialWindow.students_analyzed === 0 ? (
-                    <div className="p-6 text-center border border-dashed border-slate-800 rounded-2xl text-xs text-slate-500">
+                    <div className="p-6 text-center border border-dashed border-slate-200 rounded-xl text-xs text-slate-500">
                       Facial expression samples over time are not available for this window yet.
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-2">
-                        <span className="text-[10px] uppercase font-bold text-slate-400">Dominant Expression in Current Window</span>
-                        <div className="text-xl font-extrabold text-white uppercase">
-                          {facialWindow.dominant_expression === 'insufficient_data' ? 'Not enough data yet' : facialWindow.dominant_expression}
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-500">Dominant Expression in Current Window</span>
+                        <div className="text-xl font-bold text-slate-900 uppercase">
+                          {facialWindow.dominant_expression === 'insufficient_data' ? 'Not enough data' : facialWindow.dominant_expression}
                         </div>
-                        <div className="text-xs text-slate-400">
+                        <div className="text-xs text-slate-500">
                           {facialWindow.students_with_valid_expression} valid students of {facialWindow.students_analyzed} analyzed
                         </div>
                       </div>
 
-                      <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-2">
-                        <span className="text-[10px] uppercase font-bold text-slate-400">Expression Distribution in Current Window</span>
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                        <span className="text-[10px] uppercase font-bold text-slate-500">Expression Distribution</span>
                         <div className="grid grid-cols-5 gap-1.5 text-center text-[10px]">
                           {['neutral', 'happy', 'sad', 'angry', 'fear'].map((em) => {
                             const pct = Math.round((facialWindow.expression_distribution?.[em] || 0) * 100);
                             return (
-                              <div key={em} className="p-1.5 bg-slate-900 rounded-lg border border-slate-800">
-                                <span className="text-slate-400 block capitalize">{em}</span>
-                                <span className="text-indigo-300 font-bold">{pct}%</span>
+                              <div key={em} className="p-1.5 bg-white rounded-md border border-slate-200 shadow-2xs">
+                                <span className="text-slate-500 block capitalize">{em}</span>
+                                <span className="text-blue-700 font-bold">{pct}%</span>
                               </div>
                             );
                           })}
@@ -853,47 +851,47 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   )}
 
                   {facialSummary && (
-                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                       <div>
-                        <span className="text-[10px] uppercase font-bold text-slate-400 block">Overall Session Observed Expression</span>
-                        <span className="text-base font-extrabold text-white uppercase">
-                          {facialSummary.dominant_expression === 'insufficient_data' ? 'Not enough data yet' : facialSummary.dominant_expression}
+                        <span className="text-[10px] uppercase font-bold text-slate-500 block">Overall Session Observed Expression</span>
+                        <span className="text-base font-bold text-slate-900 uppercase">
+                          {facialSummary.dominant_expression === 'insufficient_data' ? 'Not enough data' : facialSummary.dominant_expression}
                         </span>
                       </div>
-                      <span className="text-slate-400">
+                      <span className="text-slate-500">
                         Analyzed across {facialSummary.valid_windows} of {facialSummary.total_windows} temporal windows
                       </span>
                     </div>
                   )}
                 </div>
 
-                {/* 5B. CLASSROOM SPEECH COVERAGE & ENGLISH SENTIMENT AGGREGATION */}
+                {/* 5B. CLASSROOM SPEECH COVERAGE */}
                 <div className="space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
                     <Globe className="w-4 h-4" />
                     <span>Multilingual Speech Sentiment Coverage</span>
                   </h4>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold">Total Utterances</span>
-                      <div className="text-2xl font-extrabold text-white">
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Total Utterances</span>
+                      <div className="text-2xl font-bold text-slate-900">
                         {analyticsOverview.classroom_speech_sentiment?.total_student_transcripts || 0}
                       </div>
                       <span className="text-[11px] text-slate-500">Transcribed via faster-whisper</span>
                     </div>
 
-                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold">English (Sentiment Analyzed)</span>
-                      <div className="text-2xl font-extrabold text-emerald-400">
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">English (Sentiment Analyzed)</span>
+                      <div className="text-2xl font-bold text-emerald-700">
                         {analyticsOverview.classroom_speech_sentiment?.valid_analyzed_transcripts || 0}
                       </div>
                       <span className="text-[11px] text-slate-500">Evaluated via text sentiment analysis</span>
                     </div>
 
-                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold">Kannada & Hindi Spoken</span>
-                      <div className="text-2xl font-extrabold text-amber-400">
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Kannada & Hindi Spoken</span>
+                      <div className="text-2xl font-bold text-amber-700">
                         {analyticsOverview.classroom_speech_sentiment?.unsupported_language_transcripts || 0}
                       </div>
                       <span className="text-[11px] text-slate-500">Sentiment unavailable for this language</span>
@@ -905,33 +903,33 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           </div>
 
           {/* 6. GENERATED REPORT & PRINT FUNCTIONALITY */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xs">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                <FileText className="w-4 h-4 text-indigo-400" />
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
                 <span>Generated Session Executive Report</span>
               </h3>
               <button
                 onClick={() => window.print()}
-                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border border-slate-700"
+                className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-slate-200 shadow-2xs"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Print Report</span>
               </button>
             </div>
 
-            <div className="p-5 bg-slate-950 border border-slate-800/80 rounded-2xl space-y-3 text-xs leading-relaxed text-slate-300">
-              <div className="flex items-center gap-2 text-indigo-400 font-semibold text-sm">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs leading-relaxed text-slate-700">
+              <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                 <span>Executive Summary for {selectedSession?.title}</span>
               </div>
               <p>
-                Session conducted on {selectedSession?.created_at ? new Date(selectedSession.created_at).toLocaleDateString() : 'N/A'}. Enrolled student attendance reached <strong className="text-emerald-400">{analyticsOverview.attendance_rate}%</strong> ({totalPresentCount} of {totalEnrolledCount} present). A total of <strong className="text-cyan-400">{totalSpeechSegments}</strong> student speech utterances were received and processed.
+                Session conducted on {selectedSession?.created_at ? new Date(selectedSession.created_at).toLocaleDateString() : 'N/A'}. Enrolled student attendance reached <strong className="text-emerald-700">{analyticsOverview.attendance_rate}%</strong> ({totalPresentCount} of {totalEnrolledCount} present). A total of <strong className="text-cyan-700">{totalSpeechSegments}</strong> student speech utterances were received and processed.
               </p>
-              <div className="pt-2 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px] text-slate-400">
-                <div>Students Needing Attention: <strong className="text-amber-400">{studentsNeedingAttentionCount}</strong></div>
-                <div>Students with Analytics Data: <strong className="text-indigo-300">{studentsWithDataCount}</strong></div>
-                <div>Questions & Queries Detected: <strong className="text-white">{analyticsOverview.total_questions}</strong></div>
+              <div className="pt-2 border-t border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px] text-slate-500">
+                <div>Students Needing Attention: <strong className="text-amber-700">{studentsNeedingAttentionCount}</strong></div>
+                <div>Students with Analytics Data: <strong className="text-blue-700">{studentsWithDataCount}</strong></div>
+                <div>Questions & Queries Detected: <strong className="text-slate-900">{analyticsOverview.total_questions}</strong></div>
               </div>
             </div>
           </div>

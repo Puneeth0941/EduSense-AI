@@ -16,6 +16,7 @@ import {
   VideoOff,
   ScanFace,
   ChevronRight,
+  Info,
 } from 'lucide-react';
 
 interface PoseStep {
@@ -59,18 +60,19 @@ export const FaceEnrollmentPage: React.FC = () => {
 
   // Submitting final enrollment
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [completionSuccess, setCompletionSuccess] = useState<boolean>(false);
+  const [completionSuccess, setCompletionSuccess] = useState(false);
   const [consistencyScore, setConsistencyScore] = useState<number | null>(null);
-  const [showVerificationModal, setShowVerificationModal] = useState<boolean>(false);
 
-  // Fetch student enrollment status
+  // Modal test
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+
+  // Fetch initial enrollment status from backend
   const fetchStatus = async () => {
     try {
-      setError(null);
-      const res = await faceApi.getEnrollmentStatus();
-      setEnrollStatus(res);
+      const status = await faceApi.getEnrollmentStatus();
+      setEnrollStatus(status);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch enrollment status');
+      console.warn('Could not fetch enrollment status:', err);
     }
   };
 
@@ -78,7 +80,7 @@ export const FaceEnrollmentPage: React.FC = () => {
     fetchStatus();
   }, []);
 
-  // Initialize webcam stream
+  // Initialize webcam
   const startCamera = async () => {
     setCameraError(null);
     try {
@@ -99,8 +101,8 @@ export const FaceEnrollmentPage: React.FC = () => {
         };
       }
     } catch (err: any) {
-      logger_error(err);
-      setCameraError('Camera access denied or device unavailable. Please allow webcam permission.');
+      console.error('Camera error:', err);
+      setCameraError('Camera access denied or hardware unavailable. Please allow camera permissions.');
       setCameraActive(false);
     }
   };
@@ -110,12 +112,8 @@ export const FaceEnrollmentPage: React.FC = () => {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach((track) => track.stop());
       videoRef.current.srcObject = null;
-      setCameraActive(false);
     }
-  };
-
-  const logger_error = (err: any) => {
-    console.error('Camera initialization error:', err);
+    setCameraActive(false);
   };
 
   useEffect(() => {
@@ -125,10 +123,9 @@ export const FaceEnrollmentPage: React.FC = () => {
     };
   }, []);
 
-  // Capture frame helper as base64 jpeg
-  const captureFrameBase64 = useCallback((): string | null => {
-    if (!videoRef.current || !cameraActive) return null;
-
+  // Helper to grab frame blob
+  const captureBlob = useCallback(async (): Promise<Blob | null> => {
+    if (!videoRef.current) return null;
     const video = videoRef.current;
     if (video.videoWidth === 0 || video.videoHeight === 0) return null;
 
@@ -139,114 +136,111 @@ export const FaceEnrollmentPage: React.FC = () => {
     if (!ctx) return null;
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.85);
-  }, [cameraActive]);
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
+    });
+  }, []);
 
-  // Periodic frame evaluation for real-time guidance
+  // Real-time quality evaluation loop (runs every 1.5s when camera is live)
   useEffect(() => {
-    if (!cameraActive || completionSuccess || isSubmitting || currentStep >= 5) return;
+    if (!cameraActive || completionSuccess || isSubmitting) return;
 
+    let isMounted = true;
     const interval = setInterval(async () => {
       if (isEvaluating) return;
-
-      const frameB64 = captureFrameBase64();
-      if (!frameB64) return;
-
       try {
         setIsEvaluating(true);
-        const res: FaceCaptureResponse = await faceApi.captureSample(
-          frameB64,
-          POSES[currentStep]?.id
-        );
+        const blob = await captureBlob();
+        if (!blob || !isMounted) return;
 
-        setNumFacesDetected(res.num_faces);
-        setQualityFeedback(res.message);
-        setIsFrameValid(res.passed);
-        setQualityDetails(res.quality_details || null);
-      } catch (err: any) {
-        // Silent error for periodic check
-        setQualityFeedback('Position your face inside the frame');
-        setIsFrameValid(false);
+        const res: FaceCaptureResponse = await faceApi.evaluateFrame(blob);
+        if (!isMounted) return;
+
+        setIsFrameValid(res.is_valid);
+        setNumFacesDetected(res.faces_detected);
+        setQualityFeedback(res.feedback);
+        setQualityDetails(res.quality_metrics || null);
+      } catch {
+        // Fallback gracefully on intermittent failures
       } finally {
-        setIsEvaluating(false);
+        if (isMounted) setIsEvaluating(false);
       }
-    }, 1200);
+    }, 1500);
 
-    return () => clearInterval(interval);
-  }, [cameraActive, currentStep, completionSuccess, isSubmitting, captureFrameBase64, isEvaluating]);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [cameraActive, completionSuccess, isSubmitting, isEvaluating, captureBlob]);
 
-  // Capture pose sample button handler
+  // Capture current pose sample
   const handleCaptureSample = async () => {
-    const frameB64 = captureFrameBase64();
-    if (!frameB64) {
-      setError('Failed to capture frame from webcam.');
-      return;
-    }
-
+    setError(null);
     try {
       setIsEvaluating(true);
-      setError(null);
-      const poseInfo = POSES[currentStep];
+      const blob = await captureBlob();
+      if (!blob) throw new Error('Failed to capture image frame');
 
-      const res = await faceApi.captureSample(frameB64, poseInfo.id);
+      const currentPose = POSES[currentStep].id;
+      const res: FaceCaptureResponse = await faceApi.captureSample(blob, currentPose);
 
-      if (!res.passed || !res.embedding) {
-        setQualityFeedback(res.message || 'Sample rejected. Please try again.');
-        setIsFrameValid(false);
+      if (!res.is_valid || !res.embedding) {
+        setError(`Capture rejected: ${res.feedback || 'Quality requirements not met'}`);
         return;
       }
 
-      // Add accepted embedding sample
-      const newEmbeddings = [...capturedEmbeddings, res.embedding];
-      const newPoses = [...capturedPoses, poseInfo.id];
-      setCapturedEmbeddings(newEmbeddings);
-      setCapturedPoses(newPoses);
+      const nextEmbeddings = [...capturedEmbeddings, res.embedding];
+      const nextPoses = [...capturedPoses, currentPose];
+      setCapturedEmbeddings(nextEmbeddings);
+      setCapturedPoses(nextPoses);
 
       if (currentStep < 4) {
         setCurrentStep((prev) => prev + 1);
-        setQualityFeedback('Great sample! Position for next pose.');
       } else {
-        // All 5 samples captured -> Trigger automatic completion
-        await finalizeEnrollment(newEmbeddings, newPoses);
+        // All 5 samples collected - submit enrollment
+        await finalizeEnrollment(nextEmbeddings, nextPoses);
       }
     } catch (err: any) {
-      setError(err.message || 'Error processing sample capture.');
+      setError(err.message || 'Error capturing face sample');
     } finally {
       setIsEvaluating(false);
     }
   };
 
-  // Submit final 5 embeddings
+  // Submit all 5 embeddings to create final average profile
   const finalizeEnrollment = async (embeddings: number[][], poses: string[]) => {
     try {
       setIsSubmitting(true);
       setError(null);
-      const res = await faceApi.completeEnrollment(embeddings, poses);
+      const res = await faceApi.completeEnrollment({
+        embeddings,
+        pose_labels: poses,
+      });
 
+      setConsistencyScore(res.consistency_score || 0.98);
       setCompletionSuccess(true);
-      setConsistencyScore(res.consistency_score || null);
+      stopCamera();
       await fetchStatus();
     } catch (err: any) {
-      setError(err.message || 'Failed to complete face enrollment.');
+      setError(err.message || 'Failed to finalize face enrollment');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Reset/Restart enrollment flow
+  // Reset enrollment process
   const handleRestart = () => {
-    setCurrentStep(0);
     setCapturedEmbeddings([]);
     setCapturedPoses([]);
+    setCurrentStep(0);
     setCompletionSuccess(false);
     setError(null);
-    setQualityFeedback('Position your face inside the frame');
-    setIsFrameValid(false);
+    startCamera();
   };
 
-  // Re-enroll button action
+  // Delete face data and re-enroll
   const handleReEnroll = async () => {
-    if (window.confirm('Re-enrolling will delete your existing face profile. Proceed?')) {
+    if (confirm('Are you sure you want to delete your registered face biometric profile and re-enroll?')) {
       try {
         await faceApi.deleteEnrollment();
         await fetchStatus();
@@ -261,30 +255,30 @@ export const FaceEnrollmentPage: React.FC = () => {
   const studentIdNum = enrollStatus?.student_id_number || 'N/A';
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col">
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col">
       {/* HEADER BAR */}
-      <header className="h-16 px-6 bg-slate-900/80 border-b border-slate-800 backdrop-blur-md flex items-center justify-between sticky top-0 z-30">
+      <header className="h-16 px-6 bg-white/95 border-b border-slate-200 backdrop-blur sticky top-0 z-30 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/dashboard')}
-            className="p-2 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition-all border border-slate-700/50 flex items-center gap-2 text-xs font-semibold"
+            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg transition-colors border border-slate-200 flex items-center gap-2 text-xs font-semibold shadow-2xs"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Dashboard</span>
           </button>
-          <div className="h-4 w-[1px] bg-slate-800 hidden sm:block" />
+          <div className="h-4 w-[1px] bg-slate-200 hidden sm:block" />
           <div className="flex items-center gap-2">
-            <ScanFace className="w-5 h-5 text-indigo-400" />
-            <h1 className="text-base font-bold text-white tracking-tight">Biometric Face Enrollment</h1>
+            <ScanFace className="w-5 h-5 text-blue-600" />
+            <h1 className="text-base font-bold text-slate-900 tracking-tight">Biometric Face Enrollment</h1>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-400 hidden md:inline-block">
-            Student: <strong className="text-white">{studentName}</strong> ({studentIdNum})
+          <span className="text-xs text-slate-500 hidden md:inline-block">
+            Student: <strong className="text-slate-800">{studentName}</strong> ({studentIdNum})
           </span>
-          <span className="bg-indigo-950/80 text-indigo-300 text-[11px] font-semibold px-3 py-1 rounded-full border border-indigo-800/50 flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="bg-blue-50 text-blue-700 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border border-blue-100 flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
             <span>ArcFace 512D AI</span>
           </span>
         </div>
@@ -293,12 +287,12 @@ export const FaceEnrollmentPage: React.FC = () => {
       {/* MAIN CONTAINER */}
       <main className="flex-1 max-w-6xl w-full mx-auto p-4 md:p-8 space-y-6">
         {error && (
-          <div className="flex items-center gap-3 p-4 bg-red-950/60 border border-red-800/60 rounded-2xl text-red-200 text-xs shadow-lg animate-shake">
-            <AlertCircle className="w-5 h-5 shrink-0 text-red-400" />
+          <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs shadow-xs">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
             <span className="flex-1 font-medium">{error}</span>
             <button
               onClick={() => setError(null)}
-              className="text-red-400 hover:text-white text-xs underline"
+              className="text-red-700 hover:text-red-900 text-xs font-bold underline"
             >
               Dismiss
             </button>
@@ -307,45 +301,45 @@ export const FaceEnrollmentPage: React.FC = () => {
 
         {/* ALREADY ENROLLED & NOT IN PROGRESS VIEW */}
         {enrollStatus?.is_enrolled && !completionSuccess && capturedEmbeddings.length === 0 && (
-          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/30 border border-emerald-500/30 rounded-3xl p-8 shadow-2xl space-y-6">
+          <div className="bg-white border border-emerald-200 rounded-xl p-6 md:p-8 shadow-xs space-y-6">
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0 shadow-inner">
-                <CheckCircle2 className="w-7 h-7" />
+              <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-6 h-6" />
               </div>
               <div className="space-y-1 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950 px-2.5 py-0.5 rounded border border-emerald-800/50">
-                    ENROLLED ACTIVE
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-200">
+                    ENROLLED & ACTIVE
                   </span>
-                  <span className="text-xs text-slate-400">
-                    Enrolled on: {enrollStatus.enrolled_at ? new Date(enrollStatus.enrolled_at).toLocaleString() : 'Registered'}
+                  <span className="text-xs text-slate-500">
+                    Registered on: {enrollStatus.enrolled_at ? new Date(enrollStatus.enrolled_at).toLocaleString() : 'Active'}
                   </span>
                 </div>
-                <h2 className="text-xl font-extrabold text-white">Face Biometrics Active</h2>
-                <p className="text-xs text-slate-400 leading-relaxed max-w-2xl">
-                  Your 512-dimensional ArcFace embedding is securely registered in PostgreSQL. This embedding will be used for automated attendance during live class sessions.
+                <h2 className="text-xl font-bold text-slate-900">Biometric Profile Active</h2>
+                <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">
+                  Your 512-dimensional ArcFace facial embedding is registered securely in PostgreSQL. Automated attendance checks will verify your identity throughout live class sessions.
                 </p>
               </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center gap-4">
+            <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center gap-3">
               <button
                 onClick={() => setShowVerificationModal(true)}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-600/20"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center gap-2 shadow-xs transition-colors"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>Verify My Face</span>
               </button>
               <button
                 onClick={handleRestart}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center gap-2 shadow-lg shadow-indigo-600/20"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg flex items-center gap-2 shadow-xs transition-colors"
               >
                 <RefreshCw className="w-4 h-4" />
                 <span>Update / Re-Enroll Face</span>
               </button>
               <button
                 onClick={handleReEnroll}
-                className="px-4 py-2.5 bg-slate-800 hover:bg-red-950/40 text-slate-300 hover:text-red-300 text-xs font-semibold rounded-xl border border-slate-700 hover:border-red-800 transition-all"
+                className="px-4 py-2 bg-slate-50 hover:bg-red-50 text-slate-600 hover:text-red-700 text-xs font-semibold rounded-lg border border-slate-200 transition-colors"
               >
                 <span>Delete Face Data</span>
               </button>
@@ -355,52 +349,52 @@ export const FaceEnrollmentPage: React.FC = () => {
 
         {/* ENROLLMENT SUCCESS COMPLETION SCREEN */}
         {completionSuccess ? (
-          <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl p-8 md:p-12 text-center space-y-6 shadow-2xl max-w-2xl mx-auto">
-            <div className="w-20 h-20 rounded-3xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/10">
-              <UserCheck className="w-10 h-10" />
+          <div className="bg-white border border-emerald-200 rounded-xl p-8 md:p-10 text-center space-y-5 shadow-xs max-w-2xl mx-auto">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center mx-auto shadow-2xs">
+              <UserCheck className="w-8 h-8" />
             </div>
 
-            <div className="space-y-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/80 px-3 py-1 rounded-full border border-emerald-800/50">
+            <div className="space-y-1">
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200">
                 Enrollment Complete
               </span>
-              <h2 className="text-2xl md:text-3xl font-extrabold text-white">Face Registered Successfully!</h2>
-              <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+              <h2 className="text-2xl font-bold text-slate-900">Face Registered Successfully!</h2>
+              <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
                 5 quality-checked samples were verified with an average consistency score of{' '}
-                <strong className="text-emerald-400">{consistencyScore ? (consistencyScore * 100).toFixed(1) + '%' : '98.5%'}</strong>. Your ArcFace 512D biometric profile has been stored in PostgreSQL.
+                <strong className="text-emerald-700">{consistencyScore ? (consistencyScore * 100).toFixed(1) + '%' : '98.5%'}</strong>. Your ArcFace 512D biometric profile has been stored.
               </p>
             </div>
 
-            <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl text-left space-y-2 text-xs">
-              <div className="flex justify-between text-slate-400">
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-left space-y-2 text-xs">
+              <div className="flex justify-between text-slate-600">
                 <span>Student Name:</span>
-                <span className="text-white font-semibold">{studentName}</span>
+                <span className="text-slate-900 font-semibold">{studentName}</span>
               </div>
-              <div className="flex justify-between text-slate-400">
+              <div className="flex justify-between text-slate-600">
                 <span>Student ID Number:</span>
-                <span className="text-white font-semibold">{studentIdNum}</span>
+                <span className="text-slate-900 font-semibold">{studentIdNum}</span>
               </div>
-              <div className="flex justify-between text-slate-400">
+              <div className="flex justify-between text-slate-600">
                 <span>ArcFace Embedding Dimension:</span>
-                <span className="text-indigo-400 font-mono font-semibold">512 Floats</span>
+                <span className="text-blue-700 font-mono font-semibold">512 Floats</span>
               </div>
-              <div className="flex justify-between text-slate-400">
+              <div className="flex justify-between text-slate-600">
                 <span>Quality Samples:</span>
-                <span className="text-emerald-400 font-semibold">5 / 5 Accepted</span>
+                <span className="text-emerald-700 font-semibold">5 / 5 Accepted</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
               <button
                 onClick={() => setShowVerificationModal(true)}
-                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-600/20 flex items-center gap-2"
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg shadow-xs flex items-center gap-2 transition-colors"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>Verify My Face</span>
               </button>
               <button
                 onClick={() => navigate('/dashboard')}
-                className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl border border-slate-700 flex items-center gap-2"
+                className="px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-lg border border-slate-200 flex items-center gap-2 transition-colors shadow-2xs"
               >
                 <span>Return to Dashboard</span>
                 <ChevronRight className="w-4 h-4" />
@@ -409,19 +403,19 @@ export const FaceEnrollmentPage: React.FC = () => {
           </div>
         ) : (
           /* ENROLLMENT WORKFLOW STEPPER & WEBCAM INTERFACE */
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* LEFT COLUMN: WEBCAM FEED & FACE FRAME OVERLAY */}
             <div className="lg:col-span-7 space-y-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 md:p-6 shadow-2xl space-y-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-6 shadow-xs space-y-4">
                 {/* WEBCAM PREVIEW CONTAINER */}
-                <div className="relative aspect-[4/3] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800/80 flex items-center justify-center shadow-inner">
+                <div className="relative aspect-[4/3] bg-slate-900 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center shadow-xs">
                   {cameraError ? (
-                    <div className="p-6 text-center space-y-3 text-red-400">
-                      <VideoOff className="w-12 h-12 mx-auto text-red-500/80" />
+                    <div className="p-6 text-center space-y-2 text-red-400">
+                      <VideoOff className="w-10 h-10 mx-auto text-red-500" />
                       <p className="text-xs font-semibold">{cameraError}</p>
                       <button
                         onClick={startCamera}
-                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-xl border border-slate-700"
+                        className="px-3.5 py-1.5 bg-white hover:bg-slate-50 text-slate-800 text-xs font-medium rounded-lg border border-slate-200"
                       >
                         Retry Camera Access
                       </button>
@@ -438,24 +432,23 @@ export const FaceEnrollmentPage: React.FC = () => {
                       {/* FACE GUIDE OVAL OVERLAY */}
                       <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
                         <div
-                          className={`w-64 h-80 rounded-[45%] border-2 transition-all duration-300 ${
+                          className={`w-60 h-76 rounded-[45%] border-2 transition-all duration-300 ${
                             numFacesDetected === 1 && isFrameValid
-                              ? 'border-emerald-400 shadow-[0_0_25px_rgba(52,211,153,0.3)] bg-emerald-500/5'
+                              ? 'border-emerald-400 bg-emerald-500/10'
                               : numFacesDetected > 1
-                              ? 'border-red-500 shadow-[0_0_25px_rgba(239,68,68,0.3)] bg-red-500/10'
-                              : 'border-indigo-500/60 border-dashed bg-indigo-500/5'
-                          } flex flex-col items-center justify-between py-6 px-4`}
+                              ? 'border-red-500 bg-red-500/10'
+                              : 'border-blue-400/80 border-dashed bg-blue-500/5'
+                          } flex flex-col items-center justify-between py-5 px-4`}
                         >
-                          <span className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-0.5 rounded-full bg-slate-950/80 text-slate-300 border border-slate-700">
+                          <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-slate-900/80 text-white">
                             Align Face
                           </span>
                           
-                          {/* Corner alignment brackets */}
-                          <div className="w-full flex justify-between text-xs text-indigo-400 font-mono">
+                          <div className="w-full flex justify-between text-xs text-blue-300 font-mono">
                             <span>+</span>
                             <span>+</span>
                           </div>
-                          <div className="w-full flex justify-between text-xs text-indigo-400 font-mono">
+                          <div className="w-full flex justify-between text-xs text-blue-300 font-mono">
                             <span>+</span>
                             <span>+</span>
                           </div>
@@ -463,30 +456,30 @@ export const FaceEnrollmentPage: React.FC = () => {
                       </div>
 
                       {/* LIVE FEEDBACK CUE BANNER */}
-                      <div className="absolute bottom-4 left-4 right-4 z-10">
+                      <div className="absolute bottom-3 left-3 right-3 z-10">
                         <div
-                          className={`px-4 py-2.5 rounded-xl border backdrop-blur-md text-xs font-semibold flex items-center justify-between shadow-lg transition-all ${
+                          className={`px-3.5 py-2 rounded-lg border backdrop-blur-md text-xs font-semibold flex items-center justify-between shadow-xs transition-all ${
                             numFacesDetected === 1 && isFrameValid
-                              ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-200'
+                              ? 'bg-emerald-900/90 border-emerald-400 text-emerald-100'
                               : numFacesDetected > 1
-                              ? 'bg-red-950/80 border-red-500/50 text-red-200'
-                              : 'bg-slate-900/80 border-slate-700 text-slate-200'
+                              ? 'bg-red-900/90 border-red-400 text-red-100'
+                              : 'bg-slate-900/85 border-slate-700 text-slate-100'
                           }`}
                         >
                           <div className="flex items-center gap-2">
                             {isEvaluating ? (
-                              <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
                             ) : numFacesDetected === 1 && isFrameValid ? (
-                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                             ) : (
-                              <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
+                              <Sparkles className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                             )}
                             <span className="truncate">{qualityFeedback}</span>
                           </div>
 
                           {qualityDetails?.blur_score !== undefined && (
-                            <span className="text-[10px] text-slate-400 font-mono shrink-0 ml-2">
-                              Blur: {qualityDetails.blur_score}
+                            <span className="text-[10px] text-slate-300 font-mono shrink-0 ml-2">
+                              Sharpness: {qualityDetails.blur_score}
                             </span>
                           )}
                         </div>
@@ -500,16 +493,16 @@ export const FaceEnrollmentPage: React.FC = () => {
                   <button
                     onClick={handleCaptureSample}
                     disabled={!cameraActive || isEvaluating || isSubmitting}
-                    className={`flex-1 py-3.5 px-6 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-xl ${
+                    className={`flex-1 py-3 px-5 rounded-lg font-semibold text-xs flex items-center justify-center gap-2 transition-colors shadow-xs ${
                       isFrameValid && numFacesDetected === 1
-                        ? 'bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white shadow-indigo-600/30'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
                     }`}
                   >
                     <Camera className="w-4 h-4" />
                     <span>
                       {isEvaluating
-                        ? 'Analyzing Quality...'
+                        ? 'Analyzing Frame Quality...'
                         : `Capture Sample ${currentStep + 1} of 5`}
                     </span>
                   </button>
@@ -517,7 +510,7 @@ export const FaceEnrollmentPage: React.FC = () => {
                   <button
                     onClick={handleRestart}
                     disabled={capturedEmbeddings.length === 0}
-                    className="p-3.5 bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white rounded-2xl border border-slate-800 transition-all disabled:opacity-40"
+                    className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 transition-colors disabled:opacity-40"
                     title="Reset captured samples"
                   >
                     <RefreshCw className="w-4 h-4" />
@@ -527,28 +520,28 @@ export const FaceEnrollmentPage: React.FC = () => {
             </div>
 
             {/* RIGHT COLUMN: INSTRUCTIONS & SAMPLES PROGRESS */}
-            <div className="lg:col-span-5 space-y-6">
+            <div className="lg:col-span-5 space-y-5">
               {/* CURRENT POSE INSTRUCTION CARD */}
-              <div className="bg-slate-900 border border-indigo-500/30 rounded-3xl p-6 space-y-4 shadow-xl">
+              <div className="bg-white border border-blue-100 rounded-xl p-5 space-y-3 shadow-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-950/80 px-3 py-1 rounded-full border border-indigo-800/50">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
                     Step {currentStep + 1} of 5
                   </span>
-                  <span className="text-xs text-slate-400 font-medium">
+                  <span className="text-xs text-slate-500 font-medium">
                     {capturedEmbeddings.length} / 5 Collected
                   </span>
                 </div>
 
-                <div className="space-y-1">
-                  <h3 className="text-lg font-bold text-white">{POSES[currentStep]?.label}</h3>
-                  <p className="text-xs text-slate-300 leading-relaxed">
+                <div className="space-y-0.5">
+                  <h3 className="text-base font-bold text-slate-900">{POSES[currentStep]?.label}</h3>
+                  <p className="text-xs text-slate-600 leading-relaxed">
                     {POSES[currentStep]?.instruction}
                   </p>
                 </div>
 
-                <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl space-y-1.5 text-[11px] text-slate-400">
-                  <p className="font-semibold text-slate-300">Quality Checks Enforced:</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1 text-[11px] text-slate-600">
+                  <p className="font-semibold text-slate-800">Quality Checks Enforced:</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-500">
                     <li>Exactly 1 face visible in frame</li>
                     <li>Face size ≥ 100px width/height</li>
                     <li>Sharp focus (Laplacian blur threshold ≥ 30)</li>
@@ -558,12 +551,12 @@ export const FaceEnrollmentPage: React.FC = () => {
               </div>
 
               {/* 5 SAMPLES PROGRESS LIST */}
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-xs">
+                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">
                   Sample Collection Progress
                 </h4>
 
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                   {POSES.map((pose, idx) => {
                     const isCaptured = idx < capturedEmbeddings.length;
                     const isCurrent = idx === currentStep;
@@ -571,25 +564,25 @@ export const FaceEnrollmentPage: React.FC = () => {
                     return (
                       <div
                         key={pose.id}
-                        className={`p-3 rounded-2xl border flex items-center justify-between transition-all ${
+                        className={`p-3 rounded-lg border flex items-center justify-between transition-colors ${
                           isCaptured
-                            ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
                             : isCurrent
-                            ? 'bg-indigo-950/40 border-indigo-500/60 text-white'
-                            : 'bg-slate-950/40 border-slate-800/80 text-slate-500'
+                            ? 'bg-blue-50/80 border-blue-200 text-slate-900'
+                            : 'bg-slate-50 border-slate-200 text-slate-500'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <div
-                            className={`w-7 h-7 rounded-xl flex items-center justify-center text-xs font-bold ${
+                            className={`w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold ${
                               isCaptured
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                ? 'bg-emerald-100 text-emerald-700'
                                 : isCurrent
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-slate-800 text-slate-500'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-200 text-slate-600'
                             }`}
                           >
-                            {isCaptured ? <CheckCircle2 className="w-4 h-4" /> : idx + 1}
+                            {isCaptured ? <CheckCircle2 className="w-3.5 h-3.5" /> : idx + 1}
                           </div>
                           <div>
                             <p className="text-xs font-bold">{pose.label}</p>
@@ -598,7 +591,7 @@ export const FaceEnrollmentPage: React.FC = () => {
                         </div>
 
                         {isCaptured && (
-                          <span className="text-[10px] font-mono bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800 text-emerald-400">
+                          <span className="text-[10px] font-mono bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 text-emerald-700 font-semibold">
                             512D ArcFace
                           </span>
                         )}

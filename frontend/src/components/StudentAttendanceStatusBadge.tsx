@@ -15,8 +15,8 @@ export const StudentAttendanceStatusBadge: React.FC<StudentAttendanceStatusBadge
 }) => {
   if (!isCamOn) {
     return (
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-950/80 border border-slate-800 rounded-xl text-xs text-slate-400 font-medium shadow">
-        <VideoOff className="w-3.5 h-3.5 text-slate-500" />
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 font-medium shadow-sm">
+        <VideoOff className="w-3.5 h-3.5 text-slate-400" />
         <span>Attendance: Camera Off</span>
       </div>
     );
@@ -24,8 +24,8 @@ export const StudentAttendanceStatusBadge: React.FC<StudentAttendanceStatusBadge
 
   if (isVerifying) {
     return (
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/80 border border-indigo-800/60 rounded-xl text-xs text-indigo-300 font-medium shadow animate-pulse">
-        <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-700 font-medium shadow-sm animate-pulse">
+        <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
         <span>Attendance: Verifying...</span>
       </div>
     );
@@ -34,12 +34,12 @@ export const StudentAttendanceStatusBadge: React.FC<StudentAttendanceStatusBadge
   if (attendanceData?.verified) {
     const isLate = attendanceData.attendance_status === 'LATE';
     return (
-      <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold shadow ${
+      <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold shadow-sm ${
         isLate
-          ? 'bg-amber-950/80 border-amber-800/60 text-amber-300'
-          : 'bg-emerald-950/80 border-emerald-800/60 text-emerald-300'
+          ? 'bg-amber-50 border-amber-200 text-amber-700'
+          : 'bg-emerald-50 border-emerald-200 text-emerald-700'
       }`}>
-        <ShieldCheck className={`w-3.5 h-3.5 ${isLate ? 'text-amber-400' : 'text-emerald-400'}`} />
+        <ShieldCheck className={`w-3.5 h-3.5 ${isLate ? 'text-amber-600' : 'text-emerald-600'}`} />
         <span>Attendance: Verified ✓ ({attendanceData.attendance_status})</span>
       </div>
     );
@@ -50,16 +50,16 @@ export const StudentAttendanceStatusBadge: React.FC<StudentAttendanceStatusBadge
     const required = attendanceData.samples_required || 3;
 
     return (
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/60 border border-amber-800/50 rounded-xl text-xs text-amber-300 font-medium shadow">
-        <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium shadow-sm">
+        <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
         <span>Attendance: Pending ({confirmed}/{required} samples)</span>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-950/80 border border-slate-800 rounded-xl text-xs text-slate-300 font-medium shadow">
-      <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-medium shadow-sm">
+      <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
       <span>Attendance: Monitoring...</span>
     </div>
   );

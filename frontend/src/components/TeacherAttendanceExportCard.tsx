@@ -107,40 +107,40 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl space-y-6">
+    <div className="bg-white border border-slate-200 rounded-xl p-6 md:p-8 shadow-xs space-y-6">
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800/80">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-100">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className="bg-emerald-950 text-emerald-300 text-xs font-semibold px-3 py-1 rounded-full border border-emerald-800/50 flex items-center gap-1.5">
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="bg-emerald-50 text-emerald-700 text-xs font-semibold px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1.5">
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
               <span>Excel Export Engine</span>
             </span>
-            <span className="text-slate-500 text-xs">•</span>
-            <span className="text-slate-400 text-xs font-medium">PostgreSQL & OpenPyXL</span>
+            <span className="text-slate-400 text-xs">•</span>
+            <span className="text-slate-500 text-xs font-medium">PostgreSQL & OpenPyXL</span>
           </div>
-          <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight">
+          <h3 className="text-xl font-bold text-slate-900 tracking-tight">
             Teacher Attendance Report Export
           </h3>
-          <p className="text-xs text-slate-400 leading-relaxed max-w-2xl">
-            Export verified present student attendance records, USNs, facial emotions, and speech sentiment into formatted Microsoft Excel (.xlsx) workbooks matching the official template.
+          <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">
+            Export verified present student attendance records, USNs, facial emotions, and speech sentiment into formatted Microsoft Excel (.xlsx) workbooks matching the official institutional template.
           </p>
         </div>
 
         {/* QUICK STATS PILLS */}
         {teacherAttendance && (
-          <div className="flex items-center gap-3 bg-slate-950/60 p-3 rounded-2xl border border-slate-800 shrink-0">
-            <div className="text-center px-3 border-r border-slate-800">
+          <div className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 shrink-0">
+            <div className="text-center px-3 border-r border-slate-200">
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Classrooms</p>
-              <p className="text-base font-extrabold text-white">{teacherAttendance.total_classrooms}</p>
+              <p className="text-base font-extrabold text-slate-900">{teacherAttendance.total_classrooms}</p>
             </div>
-            <div className="text-center px-3 border-r border-slate-800">
+            <div className="text-center px-3 border-r border-slate-200">
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Sessions</p>
-              <p className="text-base font-extrabold text-white">{teacherAttendance.total_sessions_conducted}</p>
+              <p className="text-base font-extrabold text-slate-900">{teacherAttendance.total_sessions_conducted}</p>
             </div>
             <div className="text-center px-3">
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Overall Rate</p>
-              <p className="text-base font-extrabold text-emerald-400">{teacherAttendance.overall_attendance_rate}%</p>
+              <p className="text-base font-extrabold text-emerald-600">{teacherAttendance.overall_attendance_rate}%</p>
             </div>
           </div>
         )}
@@ -148,14 +148,14 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
 
       {/* ERROR & SUCCESS NOTIFICATIONS */}
       {exportError && (
-        <div className="p-4 bg-red-950/60 border border-red-800 text-red-300 text-xs rounded-2xl flex items-center justify-between gap-3 animate-in fade-in duration-200">
+        <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
             <span className="font-medium">{exportError}</span>
           </div>
           <button
             onClick={() => setExportError(null)}
-            className="text-red-400 hover:text-white text-xs font-bold px-2 py-1 rounded-lg hover:bg-red-900/40"
+            className="text-red-700 hover:text-red-900 text-xs font-bold px-2 py-1 rounded hover:bg-red-100"
           >
             Dismiss
           </button>
@@ -163,14 +163,14 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
       )}
 
       {exportSuccess && (
-        <div className="p-4 bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-xs rounded-2xl flex items-center justify-between gap-3 animate-in fade-in duration-200">
+        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span className="font-medium">{exportSuccess}</span>
           </div>
           <button
             onClick={() => setExportSuccess(null)}
-            className="text-emerald-400 hover:text-white text-xs font-bold px-2 py-1 rounded-lg hover:bg-emerald-900/40"
+            className="text-emerald-700 hover:text-emerald-900 text-xs font-bold px-2 py-1 rounded hover:bg-emerald-100"
           >
             Dismiss
           </button>
@@ -181,8 +181,8 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* 1. CLASSROOM FILTER */}
         <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-            <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+            <BookOpen className="w-3.5 h-3.5 text-blue-600" />
             <span>Classroom</span>
           </label>
           <select
@@ -191,7 +191,7 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
               setSelectedClassroomId(e.target.value);
               setSelectedSessionId(''); // Reset session if classroom changes
             }}
-            className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-blue-500 font-medium"
           >
             <option value="">All Classrooms</option>
             {classrooms.map((c) => (
@@ -204,14 +204,14 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
 
         {/* 2. SESSION FILTER */}
         <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-            <Users className="w-3.5 h-3.5 text-indigo-400" />
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5 text-blue-600" />
             <span>Session</span>
           </label>
           <select
             value={selectedSessionId}
             onChange={(e) => setSelectedSessionId(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-blue-500 font-medium"
           >
             <option value="">All Sessions (Classroom / Date Range)</option>
             {availableSessions.map((s) => (
@@ -224,29 +224,29 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
 
         {/* 3. START DATE */}
         <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-blue-600" />
             <span>Start Date</span>
           </label>
           <input
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-blue-500 font-medium"
           />
         </div>
 
         {/* 4. END DATE */}
         <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-blue-600" />
             <span>End Date</span>
           </label>
           <input
             type="date"
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-blue-500 font-medium"
           />
         </div>
       </div>
@@ -254,25 +254,25 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
       {/* DATE PRESETS & ACTION BAR */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-slate-400 font-medium mr-1">Quick Date Range:</span>
+          <span className="text-[11px] text-slate-500 font-medium mr-1">Quick Presets:</span>
           <button
             type="button"
             onClick={() => applyDatePreset('today')}
-            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-semibold border border-slate-700 transition-all"
+            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-semibold transition-colors"
           >
             Today
           </button>
           <button
             type="button"
             onClick={() => applyDatePreset('7days')}
-            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-semibold border border-slate-700 transition-all"
+            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-semibold transition-colors"
           >
             Last 7 Days
           </button>
           <button
             type="button"
             onClick={() => applyDatePreset('30days')}
-            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-semibold border border-slate-700 transition-all"
+            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-semibold transition-colors"
           >
             Last 30 Days
           </button>
@@ -280,10 +280,10 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
             <button
               type="button"
               onClick={() => applyDatePreset('clear')}
-              className="px-2.5 py-1 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-slate-200 rounded-lg text-[11px] font-semibold border border-slate-800 transition-all flex items-center gap-1"
+              className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 rounded-md text-[11px] font-semibold border border-slate-200 transition-colors flex items-center gap-1"
             >
               <RotateCcw className="w-3 h-3" />
-              <span>Reset Dates</span>
+              <span>Reset</span>
             </button>
           )}
         </div>
@@ -294,7 +294,7 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
             id="export-attendance-btn"
             onClick={handleExport}
             disabled={isExporting}
-            className="w-full sm:w-auto px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 active:to-teal-700 text-white font-bold text-xs rounded-xl transition-all shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 cursor-pointer"
+            className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold text-xs rounded-lg transition-colors shadow-xs flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
           >
             {isExporting ? (
               <>
@@ -303,7 +303,7 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
               </>
             ) : (
               <>
-                <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                <FileSpreadsheet className="w-4 h-4 text-white" />
                 <span>Export Attendance to Excel</span>
               </>
             )}
@@ -313,39 +313,39 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
 
       {/* RECENT SESSIONS ATTENDANCE QUICK LAUNCH */}
       {sessions.length > 0 && onOpenSessionAttendance && (
-        <div className="pt-4 border-t border-slate-800/80">
+        <div className="pt-4 border-t border-slate-100">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
               Recent Conducted Sessions (Quick Roster View)
             </h4>
-            <span className="text-[11px] text-slate-500">Click to view or edit live attendance</span>
+            <span className="text-[11px] text-slate-400">Click to view or edit live attendance</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {sessions.slice(0, 3).map((sess) => (
               <div
                 key={sess.id}
-                className="p-3 bg-slate-950/70 border border-slate-800/90 hover:border-indigo-500/40 rounded-2xl flex items-center justify-between gap-3 transition-all group"
+                className="p-3 bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-lg flex items-center justify-between gap-3 transition-colors"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 mb-0.5">
-                    <span className="text-[10px] font-bold text-indigo-400 uppercase">
+                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-100 uppercase">
                       {sess.course_code || 'CS'}
                     </span>
-                    <span className="text-slate-600 text-[10px]">•</span>
+                    <span className="text-slate-300 text-[10px]">•</span>
                     <span className="text-[10px] text-slate-500">
                       {sess.actual_end_time
                         ? new Date(sess.actual_end_time).toLocaleDateString()
                         : new Date(sess.created_at).toLocaleDateString()}
                     </span>
                   </div>
-                  <p className="text-xs font-bold text-white truncate">{sess.title}</p>
+                  <p className="text-xs font-bold text-slate-900 truncate">{sess.title}</p>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => onOpenSessionAttendance(sess.id)}
-                    className="p-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all"
+                    className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-md text-xs font-semibold flex items-center gap-1 transition-colors"
                     title="Open Roster Modal"
                   >
                     <Users className="w-3.5 h-3.5" />
@@ -365,7 +365,7 @@ export const TeacherAttendanceExportCard: React.FC<TeacherAttendanceExportCardPr
                       }
                     }}
                     disabled={isExporting}
-                    className="p-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all"
+                    className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-md text-xs font-semibold flex items-center gap-1 transition-colors"
                     title="Export this session directly to Excel"
                   >
                     <Download className="w-3.5 h-3.5" />
